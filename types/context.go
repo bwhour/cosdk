@@ -11,7 +11,7 @@ import (
 	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 
 	"github.com/cosmos/cosmos-sdk/store/gaskv"
-	stypes "github.com/cosmos/cosmos-sdk/store/types"
+	storetypes "github.com/cosmos/cosmos-sdk/store/types"
 )
 
 /*
@@ -36,7 +36,7 @@ type Context struct {
 	checkTx       bool
 	recheckTx     bool // if recheckTx == true, then checkTx must also be true
 	minGasPrice   DecCoins
-	consParams    *abci.ConsensusParams
+	consParams    *tmproto.ConsensusParams
 	eventManager  *EventManager
 }
 
@@ -72,8 +72,8 @@ func (c Context) HeaderHash() tmbytes.HexBytes {
 	return hash
 }
 
-func (c Context) ConsensusParams() *abci.ConsensusParams {
-	return proto.Clone(c.consParams).(*abci.ConsensusParams)
+func (c Context) ConsensusParams() *tmproto.ConsensusParams {
+	return proto.Clone(c.consParams).(*tmproto.ConsensusParams)
 }
 
 // create a new context
@@ -87,7 +87,7 @@ func NewContext(ms MultiStore, header tmproto.Header, isCheckTx bool, logger log
 		chainID:      header.ChainID,
 		checkTx:      isCheckTx,
 		logger:       logger,
-		gasMeter:     stypes.NewInfiniteGasMeter(),
+		gasMeter:     storetypes.NewInfiniteGasMeter(),
 		minGasPrice:  DecCoins{},
 		eventManager: NewEventManager(),
 	}
@@ -203,7 +203,7 @@ func (c Context) WithMinGasPrices(gasPrices DecCoins) Context {
 }
 
 // WithConsensusParams returns a Context with an updated consensus params
-func (c Context) WithConsensusParams(params *abci.ConsensusParams) Context {
+func (c Context) WithConsensusParams(params *tmproto.ConsensusParams) Context {
 	c.consParams = params
 	return c
 }
@@ -243,13 +243,13 @@ func (c Context) Value(key interface{}) interface{} {
 // ----------------------------------------------------------------------------
 
 // KVStore fetches a KVStore from the MultiStore.
-func (c Context) KVStore(key StoreKey) KVStore {
-	return gaskv.NewStore(c.MultiStore().GetKVStore(key), c.GasMeter(), stypes.KVGasConfig())
+func (c Context) KVStore(key storetypes.StoreKey) KVStore {
+	return gaskv.NewStore(c.MultiStore().GetKVStore(key), c.GasMeter(), storetypes.KVGasConfig())
 }
 
 // TransientStore fetches a TransientStore from the MultiStore.
-func (c Context) TransientStore(key StoreKey) KVStore {
-	return gaskv.NewStore(c.MultiStore().GetKVStore(key), c.GasMeter(), stypes.TransientGasConfig())
+func (c Context) TransientStore(key storetypes.StoreKey) KVStore {
+	return gaskv.NewStore(c.MultiStore().GetKVStore(key), c.GasMeter(), storetypes.TransientGasConfig())
 }
 
 // CacheContext returns a new Context with the multi-store cached and a new

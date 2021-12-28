@@ -2,13 +2,12 @@ package client
 
 import (
 	"bufio"
-	"encoding/json"
 	"io"
 	"os"
 
 	"github.com/spf13/viper"
 
-	"gopkg.in/yaml.v2"
+	"sigs.k8s.io/yaml"
 
 	"github.com/gogo/protobuf/proto"
 	rpcclient "github.com/tendermint/tendermint/rpc/client"
@@ -47,8 +46,12 @@ type Context struct {
 	TxConfig          TxConfig
 	AccountRetriever  AccountRetriever
 	NodeURI           string
+	FeePayer          sdk.AccAddress
 	FeeGranter        sdk.AccAddress
 	Viper             *viper.Viper
+	
+	// IsAux is true when the signer is an auxiliary signer (e.g. the tipper).
+	IsAux             bool
 
 	// TODO: Deprecated (remove).
 	LegacyAmino *codec.LegacyAmino
@@ -182,6 +185,13 @@ func (ctx Context) WithFromAddress(addr sdk.AccAddress) Context {
 	return ctx
 }
 
+// WithFeePayerAddress returns a copy of the context with an updated fee payer account
+// address.
+func (ctx Context) WithFeePayerAddress(addr sdk.AccAddress) Context {
+	ctx.FeePayer = addr
+	return ctx
+}
+
 // WithFeeGranterAddress returns a copy of the context with an updated fee granter account
 // address.
 func (ctx Context) WithFeeGranterAddress(addr sdk.AccAddress) Context {
@@ -238,6 +248,12 @@ func (ctx Context) WithViper(prefix string) Context {
 	return ctx
 }
 
+// WithAux returns a copy of the context with an updated IsAux value.
+func (ctx Context) WithAux(isAux bool) Context {
+	ctx.IsAux = isAux
+	return ctx
+}
+
 // PrintString prints the raw string to ctx.Output if it's defined, otherwise to os.Stdout
 func (ctx Context) PrintString(str string) error {
 	return ctx.PrintBytes([]byte(str))
@@ -279,16 +295,9 @@ func (ctx Context) PrintObjectLegacy(toPrint interface{}) error {
 }
 
 func (ctx Context) printOutput(out []byte) error {
+	var err error
 	if ctx.OutputFormat == "text" {
-		// handle text format by decoding and re-encoding JSON as YAML
-		var j interface{}
-
-		err := json.Unmarshal(out, &j)
-		if err != nil {
-			return err
-		}
-
-		out, err = yaml.Marshal(j)
+		out, err = yaml.JSONToYAML(out)
 		if err != nil {
 			return err
 		}
@@ -299,7 +308,7 @@ func (ctx Context) printOutput(out []byte) error {
 		writer = os.Stdout
 	}
 
-	_, err := writer.Write(out)
+	_, err = writer.Write(out)
 	if err != nil {
 		return err
 	}
@@ -323,27 +332,32 @@ func GetFromFields(kr keyring.Keyring, from string, genOnly bool) (sdk.AccAddres
 		return nil, "", 0, nil
 	}
 
-	var info keyring.Info
+	var k *keyring.Record
 	if addr, err := sdk.AccAddressFromBech32(from); err == nil {
-		info, err = kr.KeyByAddress(addr)
+		k, err = kr.KeyByAddress(addr)
 		if err != nil {
 			return nil, "", 0, err
 		}
 	} else {
-		info, err = kr.Key(from)
+		k, err = kr.Key(from)
 		if err != nil {
 			return nil, "", 0, err
 		}
 	}
 
-	return info.GetAddress(), info.GetName(), info.GetType(), nil
+	addr, err := k.GetAddress()
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	return addr, k.Name, k.GetType(), nil
 }
 
 // NewKeyringFromBackend gets a Keyring object from a backend
 func NewKeyringFromBackend(ctx Context, backend string) (keyring.Keyring, error) {
 	if ctx.GenerateOnly || ctx.Simulate {
-		return keyring.New(sdk.KeyringServiceName(), keyring.BackendMemory, ctx.KeyringDir, ctx.Input, ctx.KeyringOptions...)
+		backend = keyring.BackendMemory
 	}
 
-	return keyring.New(sdk.KeyringServiceName(), backend, ctx.KeyringDir, ctx.Input, ctx.KeyringOptions...)
+	return keyring.New(sdk.KeyringServiceName(), backend, ctx.KeyringDir, ctx.Input, ctx.Codec, ctx.KeyringOptions...)
 }

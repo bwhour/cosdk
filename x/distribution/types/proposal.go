@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 )
 
 const (
@@ -21,7 +21,7 @@ func init() {
 	govtypes.RegisterProposalTypeCodec(&CommunityPoolSpendProposal{}, "cosmos-sdk/CommunityPoolSpendProposal")
 }
 
-// NewCommunityPoolSpendProposal creates a new community pool spned proposal.
+// NewCommunityPoolSpendProposal creates a new community pool spend proposal.
 //nolint:interfacer
 func NewCommunityPoolSpendProposal(title, description string, recipient sdk.AccAddress, amount sdk.Coins) *CommunityPoolSpendProposal {
 	return &CommunityPoolSpendProposal{title, description, recipient.String(), amount}

@@ -3,15 +3,17 @@ package keeper
 import (
 	"encoding/binary"
 	"encoding/json"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 
+	storetypes "github.com/cosmos/cosmos-sdk/store/types"
 	"github.com/tendermint/tendermint/libs/log"
 	tmos "github.com/tendermint/tendermint/libs/os"
 
 	"github.com/cosmos/cosmos-sdk/codec"
+	"github.com/cosmos/cosmos-sdk/internal/conv"
 	"github.com/cosmos/cosmos-sdk/store/prefix"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -27,7 +29,7 @@ const UpgradeInfoFileName string = "upgrade-info.json"
 type Keeper struct {
 	homePath           string                          // root directory of app config
 	skipUpgradeHeights map[int64]bool                  // map of heights to skip for an upgrade
-	storeKey           sdk.StoreKey                    // key to access x/upgrade store
+	storeKey           storetypes.StoreKey             // key to access x/upgrade store
 	cdc                codec.BinaryCodec               // App-wide binary codec
 	upgradeHandlers    map[string]types.UpgradeHandler // map of plan name to upgrade handler
 	versionSetter      xp.ProtocolVersionSetter        // implements setting the protocol version field on BaseApp
@@ -39,7 +41,7 @@ type Keeper struct {
 // cdc - the app-wide binary codec
 // homePath - root directory of the application's config
 // vs - the interface implemented by baseapp which allows setting baseapp's protocol version field
-func NewKeeper(skipUpgradeHeights map[int64]bool, storeKey sdk.StoreKey, cdc codec.BinaryCodec, homePath string, vs xp.ProtocolVersionSetter) Keeper {
+func NewKeeper(skipUpgradeHeights map[int64]bool, storeKey storetypes.StoreKey, cdc codec.BinaryCodec, homePath string, vs xp.ProtocolVersionSetter) Keeper {
 	return Keeper{
 		homePath:           homePath,
 		skipUpgradeHeights: skipUpgradeHeights,
@@ -84,7 +86,18 @@ func (k Keeper) SetModuleVersionMap(ctx sdk.Context, vm module.VersionMap) {
 	if len(vm) > 0 {
 		store := ctx.KVStore(k.storeKey)
 		versionStore := prefix.NewStore(store, []byte{types.VersionMapByte})
-		for modName, ver := range vm {
+		// Even though the underlying store (cachekv) store is sorted, we still
+		// prefer a deterministic iteration order of the map, to avoid undesired
+		// surprises if we ever change stores.
+		sortedModNames := make([]string, 0, len(vm))
+
+		for key := range vm {
+			sortedModNames = append(sortedModNames, key)
+		}
+		sort.Strings(sortedModNames)
+
+		for _, modName := range sortedModNames {
+			ver := vm[modName]
 			nameBytes := []byte(modName)
 			verBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(verBytes, ver)
@@ -218,7 +231,7 @@ func (k Keeper) GetUpgradedConsensusState(ctx sdk.Context, lastHeight int64) ([]
 // GetDoneHeight returns the height at which the given upgrade was executed
 func (k Keeper) GetDoneHeight(ctx sdk.Context, name string) int64 {
 	store := prefix.NewStore(ctx.KVStore(k.storeKey), []byte{types.DoneByte})
-	bz := store.Get([]byte(name))
+	bz := store.Get(conv.UnsafeStrToBytes(name))
 	if len(bz) == 0 {
 		return 0
 	}
@@ -329,7 +342,7 @@ func (k Keeper) DumpUpgradeInfoToDisk(height int64, p types.Plan) error {
 		return err
 	}
 
-	return ioutil.WriteFile(upgradeInfoFilePath, info, 0600)
+	return os.WriteFile(upgradeInfoFilePath, info, 0600)
 }
 
 // GetUpgradeInfoPath returns the upgrade info file path
@@ -360,7 +373,7 @@ func (k Keeper) ReadUpgradeInfoFromDisk() (types.Plan, error) {
 		return upgradeInfo, err
 	}
 
-	data, err := ioutil.ReadFile(upgradeInfoPath)
+	data, err := os.ReadFile(upgradeInfoPath)
 	if err != nil {
 		// if file does not exist, assume there are no upgrades
 		if os.IsNotExist(err) {

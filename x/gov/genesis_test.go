@@ -15,8 +15,12 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	distributiontypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	"github.com/cosmos/cosmos-sdk/x/gov"
 	"github.com/cosmos/cosmos-sdk/x/gov/types"
+	"github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
+	"github.com/cosmos/cosmos-sdk/x/staking"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 func TestImportExportQueues(t *testing.T) {
@@ -49,11 +53,13 @@ func TestImportExportQueues(t *testing.T) {
 	require.True(t, ok)
 	proposal2, ok = app.GovKeeper.GetProposal(ctx, proposalID2)
 	require.True(t, ok)
-	require.True(t, proposal1.Status == types.StatusDepositPeriod)
-	require.True(t, proposal2.Status == types.StatusVotingPeriod)
+	require.True(t, proposal1.Status == v1beta1.StatusDepositPeriod)
+	require.True(t, proposal2.Status == v1beta1.StatusVotingPeriod)
 
 	authGenState := auth.ExportGenesis(ctx, app.AccountKeeper)
 	bankGenState := app.BankKeeper.ExportGenesis(ctx)
+	stakingGenState := staking.ExportGenesis(ctx, app.StakingKeeper)
+	distributionGenState := app.DistrKeeper.ExportGenesis(ctx)
 
 	// export the state and import it into a new app
 	govGenState := gov.ExportGenesis(ctx, app.GovKeeper)
@@ -62,6 +68,8 @@ func TestImportExportQueues(t *testing.T) {
 	genesisState[authtypes.ModuleName] = app.AppCodec().MustMarshalJSON(authGenState)
 	genesisState[banktypes.ModuleName] = app.AppCodec().MustMarshalJSON(bankGenState)
 	genesisState[types.ModuleName] = app.AppCodec().MustMarshalJSON(govGenState)
+	genesisState[stakingtypes.ModuleName] = app.AppCodec().MustMarshalJSON(stakingGenState)
+	genesisState[distributiontypes.ModuleName] = app.AppCodec().MustMarshalJSON(distributionGenState)
 
 	stateBytes, err := json.MarshalIndent(genesisState, "", " ")
 	if err != nil {
@@ -95,8 +103,8 @@ func TestImportExportQueues(t *testing.T) {
 	require.True(t, ok)
 	proposal2, ok = app2.GovKeeper.GetProposal(ctx2, proposalID2)
 	require.True(t, ok)
-	require.True(t, proposal1.Status == types.StatusDepositPeriod)
-	require.True(t, proposal2.Status == types.StatusVotingPeriod)
+	require.True(t, proposal1.Status == v1beta1.StatusDepositPeriod)
+	require.True(t, proposal2.Status == v1beta1.StatusVotingPeriod)
 
 	macc := app2.GovKeeper.GetGovernanceAccount(ctx2)
 	require.Equal(t, app2.GovKeeper.GetDepositParams(ctx2).MinDeposit, app2.BankKeeper.GetAllBalances(ctx2, macc.GetAddress()))
@@ -109,15 +117,15 @@ func TestImportExportQueues(t *testing.T) {
 
 	proposal2, ok = app2.GovKeeper.GetProposal(ctx2, proposalID2)
 	require.True(t, ok)
-	require.True(t, proposal2.Status == types.StatusRejected)
+	require.True(t, proposal2.Status == v1beta1.StatusRejected)
 }
 
 func TestImportExportQueues_ErrorUnconsistentState(t *testing.T) {
 	app := simapp.Setup(t, false)
 	ctx := app.BaseApp.NewContext(false, tmproto.Header{})
 	require.Panics(t, func() {
-		gov.InitGenesis(ctx, app.AccountKeeper, app.BankKeeper, app.GovKeeper, &types.GenesisState{
-			Deposits: types.Deposits{
+		gov.InitGenesis(ctx, app.AccountKeeper, app.BankKeeper, app.GovKeeper, &v1beta1.GenesisState{
+			Deposits: v1beta1.Deposits{
 				{
 					ProposalId: 1234,
 					Depositor:  "me",
@@ -156,8 +164,8 @@ func TestEqualProposals(t *testing.T) {
 	require.NotEqual(t, proposal1, proposal2)
 
 	// Now create two genesis blocks
-	state1 := types.GenesisState{Proposals: []types.Proposal{proposal1}}
-	state2 := types.GenesisState{Proposals: []types.Proposal{proposal2}}
+	state1 := v1beta1.GenesisState{Proposals: []v1beta1.Proposal{proposal1}}
+	state2 := v1beta1.GenesisState{Proposals: []v1beta1.Proposal{proposal2}}
 	require.NotEqual(t, state1, state2)
 	require.False(t, state1.Equal(state2))
 

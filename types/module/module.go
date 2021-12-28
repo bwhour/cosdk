@@ -30,6 +30,8 @@ package module
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
 
 	"github.com/gorilla/mux"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
@@ -251,21 +253,25 @@ func NewManager(modules ...AppModule) *Manager {
 
 // SetOrderInitGenesis sets the order of init genesis calls
 func (m *Manager) SetOrderInitGenesis(moduleNames ...string) {
+	m.checkForgottenModules("SetOrderInitGenesis", moduleNames)
 	m.OrderInitGenesis = moduleNames
 }
 
 // SetOrderExportGenesis sets the order of export genesis calls
 func (m *Manager) SetOrderExportGenesis(moduleNames ...string) {
+	m.checkForgottenModules("SetOrderExportGenesis", moduleNames)
 	m.OrderExportGenesis = moduleNames
 }
 
 // SetOrderBeginBlockers sets the order of set begin-blocker calls
 func (m *Manager) SetOrderBeginBlockers(moduleNames ...string) {
+	m.checkForgottenModules("SetOrderBeginBlockers", moduleNames)
 	m.OrderBeginBlockers = moduleNames
 }
 
 // SetOrderEndBlockers sets the order of set end-blocker calls
 func (m *Manager) SetOrderEndBlockers(moduleNames ...string) {
+	m.checkForgottenModules("SetOrderEndBlockers", moduleNames)
 	m.OrderEndBlockers = moduleNames
 }
 
@@ -295,7 +301,9 @@ func (m *Manager) RegisterServices(cfg Configurator) {
 	}
 }
 
-// InitGenesis performs init genesis functionality for modules
+// InitGenesis performs init genesis functionality for modules. Exactly one
+// module must return a non-empty validator set update to correctly initialize
+// the chain.
 func (m *Manager) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, genesisData map[string]json.RawMessage) abci.ResponseInitChain {
 	var validatorUpdates []abci.ValidatorUpdate
 	ctx.Logger().Info("initializing blockchain state from genesis.json")
@@ -317,6 +325,11 @@ func (m *Manager) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, genesisData 
 		}
 	}
 
+	// a chain must initialize with a non-empty validator set
+	if len(validatorUpdates) == 0 {
+		panic(fmt.Sprintf("validator set is empty after InitGenesis, please ensure at least one validator is initialized with a delegation greater than or equal to the DefaultPowerReduction (%d)", sdk.DefaultPowerReduction))
+	}
+
 	return abci.ResponseInitChain{
 		Validators: validatorUpdates,
 	}
@@ -330,6 +343,19 @@ func (m *Manager) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) map[string
 	}
 
 	return genesisData
+}
+
+// checkForgottenModules checks that we didn't forget any modules in the
+// SetOrder* functions.
+func (m *Manager) checkForgottenModules(setOrderFnName string, moduleNames []string) {
+	setOrderMap := map[string]struct{}{}
+	for _, m := range moduleNames {
+		setOrderMap[m] = struct{}{}
+	}
+
+	if len(setOrderMap) != len(m.Modules) {
+		panic(fmt.Sprintf("got %d modules in the module manager, but %d modules in %s", len(m.Modules), len(setOrderMap), setOrderFnName))
+	}
 }
 
 // MigrationHandler is the migration function that each module registers.
@@ -391,36 +417,41 @@ func (m Manager) RunMigrations(ctx sdk.Context, cfg Configurator, fromVM Version
 	}
 
 	updatedVM := make(VersionMap)
-	for moduleName, module := range m.Modules {
+	// for deterministic iteration order
+	// (as some migrations depend on other modules
+	// and the order of executing migrations matters)
+	// TODO: make the order user-configurable?
+	sortedModNames := make([]string, 0, len(m.Modules))
+	for key := range m.Modules {
+		sortedModNames = append(sortedModNames, key)
+	}
+	sort.Strings(sortedModNames)
+
+	for _, moduleName := range sortedModNames {
+		module := m.Modules[moduleName]
 		fromVersion, exists := fromVM[moduleName]
 		toVersion := module.ConsensusVersion()
 
-		// Only run migrations when the module exists in the fromVM.
-		// Run InitGenesis otherwise.
+		// We run migration if the module is specified in `fromVM`.
+		// Otherwise we run InitGenesis.
 		//
-		// the module won't exist in the fromVM in two cases:
+		// The module won't exist in the fromVM in two cases:
 		// 1. A new module is added. In this case we run InitGenesis with an
 		// empty genesis state.
-		// 2. An existing chain is upgrading to v043 for the first time. In this case,
-		// all modules have yet to be added to x/upgrade's VersionMap store.
+		// 2. An existing chain is upgrading from version < 0.43 to v0.43+ for the first time.
+		// In this case, all modules have yet to be added to x/upgrade's VersionMap store.
 		if exists {
 			err := c.runModuleMigrations(ctx, moduleName, fromVersion, toVersion)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			cfgtor, ok := cfg.(configurator)
-			if !ok {
-				// Currently, the only implementator of Configurator (the interface)
-				// is configurator (the struct).
-				return nil, sdkerrors.Wrapf(sdkerrors.ErrInvalidType, "expected %T, got %T", configurator{}, cfg)
-			}
-
-			moduleValUpdates := module.InitGenesis(ctx, cfgtor.cdc, module.DefaultGenesis(cfgtor.cdc))
+			ctx.Logger().Info(fmt.Sprintf("adding a new module: %s", moduleName))
+			moduleValUpdates := module.InitGenesis(ctx, c.cdc, module.DefaultGenesis(c.cdc))
 			// The module manager assumes only one module will update the
-			// validator set, and that it will not be by a new module.
+			// validator set, and it can't be a new module.
 			if len(moduleValUpdates) > 0 {
-				return nil, sdkerrors.Wrapf(sdkerrors.ErrLogic, "validator InitGenesis updates already set by a previous module")
+				return nil, sdkerrors.Wrapf(sdkerrors.ErrLogic, "validator InitGenesis update is already set by another module")
 			}
 		}
 

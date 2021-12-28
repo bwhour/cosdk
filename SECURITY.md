@@ -1,7 +1,7 @@
 # Security
 
-> **IMPORTANT**: If you find a security issue, you can contact our team directly at
-security@tendermint.com, or report it to our [bug bounty program](https://hackerone.com/tendermint) on HackerOne. *DO NOT* open a public issue on the repository.
+> **IMPORTANT**: If you find a security issue, you can
+report it to our [bug bounty program](https://hackerone.com/cosmos) on HackerOne. *DO NOT* open a public issue on the repository.
 
 ## Bug Bounty
 
@@ -52,14 +52,14 @@ the code.
 - HD key derivation, local and Ledger, and all key-management functionality
 - Side-channel attack vectors with our implementations
     - e.g. key exfiltration based on time or memory-access patterns when decrypting privkey
-  
+
 ## Disclosure Process
 
 The Cosmos SDK team uses the following disclosure process:
 
 1. After a security report is received, the Cosmos SDK team works to verify the issue and confirm its severity level using Common Vulnerability Scoring System (CVSS).
 1. The Cosmos SDK team collaborates with the Tendermint and Gaia teams to determine the vulnerability’s potential impact on the Cosmos Hub and partners.
-1. Patches are prepared in private repositories for eligible releases of Cosmos SDK. See [Stable Releases](https://github.com/cosmos/cosmos-sdk/blob/master/STABLE_RELEASES.md) for a list of eligible releases.
+1. Patches are prepared in private repositories for eligible releases of Cosmos SDK. See [Stable Release Policy](https://github.com/cosmos/cosmos-sdk/blob/master/RELEASE_PROCESS.md#stable-release-policy) for a list of eligible releases.
 1. If it is determined that a CVE-ID is required, we request a CVE through a CVE Numbering Authority.
 1. We notify the community that a security release is coming to give users time to prepare their systems for the update. Notifications can include forum posts, tweets, and emails to partners and validators.
 1. 24 hours after the notification, fixes are applied publicly and new releases are issued.

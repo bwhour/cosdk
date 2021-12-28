@@ -22,7 +22,7 @@ service definitions defined in [ADR 021](./adr-021-protobuf-query-encoding.md) a
 
 In the current Cosmos SDK documentation on the [Object-Capability Model](../core/ocap.md), it is stated that:
 
-> We assume that a thriving ecosystem of Cosmos-SDK modules that are easy to compose into a blockchain application will contain faulty or malicious modules.
+> We assume that a thriving ecosystem of Cosmos SDK modules that are easy to compose into a blockchain application will contain faulty or malicious modules.
 
 There is currently not a thriving ecosystem of Cosmos SDK modules. We hypothesize that this is in part due to:
 
@@ -352,9 +352,9 @@ Other future improvements may include:
 ### MsgServices vs `x/capability`
 
 The `x/capability` module does provide a proper object-capability implementation that can be used by any module in the
-SDK and could even be used for inter-module OCAPs as described in [\#5931](https://github.com/cosmos/cosmos-sdk/issues/5931).
+Cosmos SDK and could even be used for inter-module OCAPs as described in [\#5931](https://github.com/cosmos/cosmos-sdk/issues/5931).
 
-The advantages of the approach described in this ADR are mostly around how it integrates with other parts of the SDK,
+The advantages of the approach described in this ADR are mostly around how it integrates with other parts of the Cosmos SDK,
 specifically:
 
 * protobuf so that:
@@ -381,7 +381,7 @@ replacing `Keeper` interfaces altogether.
 - improved module developer DevX, as commented on by several particpants on
     [Architecture Review Call, Dec 3](https://hackmd.io/E0wxxOvRQ5qVmTf6N_k84Q)
 - lays the groundwork for what can be a greatly simplified `app.go`
-- router can be setup to enforce atomic transactions for moule-to-module calls
+- router can be setup to enforce atomic transactions for module-to-module calls
 
 ### Negative
 

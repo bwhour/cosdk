@@ -680,7 +680,6 @@ func (k Keeper) Unbond(
 		validator = k.mustGetValidator(ctx, validator.GetOperator())
 	}
 
-	// remove the delegation
 	if delegation.Shares.IsZero() {
 		err = k.RemoveDelegation(ctx, delegation)
 	} else {
@@ -696,7 +695,6 @@ func (k Keeper) Unbond(
 	// remove the shares and coins from the validator
 	// NOTE that the amount is later (in keeper.Delegation) moved between staking module pools
 	validator, amount = k.RemoveValidatorTokensAndShares(ctx, validator, shares)
-
 	if validator.DelegatorShares.IsZero() && validator.IsUnbonded() {
 		// if not unbonded, we must instead remove validator in EndBlocker once it finishes its unbonding period
 		k.RemoveValidator(ctx, validator.GetOperator())
