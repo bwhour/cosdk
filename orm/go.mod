@@ -3,9 +3,9 @@ module github.com/cosmos/cosmos-sdk/orm
 go 1.17
 
 require (
-	github.com/cosmos/cosmos-proto v1.0.0-alpha4
+	github.com/cosmos/cosmos-proto v1.0.0-alpha6
 	github.com/cosmos/cosmos-sdk v0.44.5
-	github.com/cosmos/cosmos-sdk/api v0.1.0-alpha1
+	github.com/cosmos/cosmos-sdk/api v0.1.0-alpha3
 	google.golang.org/protobuf v1.27.1
 	gotest.tools/v3 v3.0.3
 	pgregory.net/rapid v0.4.7
@@ -25,8 +25,8 @@ require (
 	golang.org/x/sys v0.0.0-20210903071746-97244b99971b // indirect
 	golang.org/x/text v0.3.6 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
-	google.golang.org/genproto v0.0.0-20210828152312-66f60bf46e71 // indirect
-	google.golang.org/grpc v1.42.0 // indirect
+	google.golang.org/genproto v0.0.0-20211223182754-3ac035c7e7cb // indirect
+	google.golang.org/grpc v1.43.0 // indirect
 )
 
 replace github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
