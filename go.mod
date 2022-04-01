@@ -12,7 +12,7 @@ require (
 	github.com/confio/ics23/go v0.6.6
 	github.com/cosmos/btcutil v1.0.4
 	github.com/cosmos/cosmos-proto v1.0.0-alpha7
-	github.com/cosmos/cosmos-sdk/api v0.1.0-alpha4
+	github.com/cosmos/cosmos-sdk/api v0.1.0
 	github.com/cosmos/cosmos-sdk/db v1.0.0-beta.1
 	github.com/cosmos/cosmos-sdk/errors v1.0.0-beta.2
 	github.com/cosmos/go-bip39 v1.0.0
@@ -52,8 +52,8 @@ require (
 	github.com/tendermint/tm-db v0.6.6
 	golang.org/x/crypto v0.0.0-20220112180741-5e0467b6c7ce
 	google.golang.org/genproto v0.0.0-20220118154757-00ab72f36ad5
-	google.golang.org/grpc v1.44.0
-	google.golang.org/protobuf v1.27.1
+	google.golang.org/grpc v1.45.0
+	google.golang.org/protobuf v1.28.0
 	pgregory.net/rapid v0.4.7
 	sigs.k8s.io/yaml v1.3.0
 )
