@@ -1,5 +1,5 @@
 <!--
-order: 6
+order: 7
 -->
 
 # Encoding
@@ -66,6 +66,24 @@ keeper.cdc.MustUnmarshal(bz, &typeOrInterface)
 Note, there are length-prefixed variants of the above functionality and this is
 typically used for when the data needs to be streamed or grouped together
 (e.g. `ResponseDeliverTx.Data`)
+
+#### Authz authorizations
+
+Since the `MsgExec` message type can contain different messages instances, it is important that developers
+add the following code inside the `init` method of their module's `codec.go` file:
+
+```go
+import authzcodec "github.com/cosmos/cosmos-sdk/x/authz/codec"
+
+init() {
+    // Register all Amino interfaces and concrete types on the authz Amino codec so that this can later be
+    // used to properly serialize MsgGrant and MsgExec instances
+    RegisterLegacyAminoCodec(authzcodec.Amino)
+}
+```
+
+This will allow the `x/authz` module to properly serialize and de-serializes `MsgExec` instances using Amino, 
+which is required when signing this kind of messages using a Ledger. 
 
 ### Gogoproto
 
@@ -229,7 +247,7 @@ may simply migrate any existing types that
 are encoded and persisted via their concrete Amino codec to Protobuf (see 1. for further guidelines) and accept a `Marshaler` as the codec which is implemented via the `ProtoCodec`
 without any further customization.
 
-However, if a module type composes an interface, it must wrap it in the `skd.Any` (from `/types` package) type. To do that, a module-level .proto file must use [`google.protobuf.Any`](https://github.com/protocolbuffers/protobuf/blob/master/src/google/protobuf/any.proto) for respective message type interface types.
+However, if a module type composes an interface, it must wrap it in the `sdk.Any` (from `/types` package) type. To do that, a module-level .proto file must use [`google.protobuf.Any`](https://github.com/protocolbuffers/protobuf/blob/master/src/google/protobuf/any.proto) for respective message type interface types.
 
 For example, in the `x/evidence` module defines an `Evidence` interface, which is used by the `MsgSubmitEvidence`. The structure definition must use `sdk.Any` to wrap the evidence file. In the proto file we define it as follows:
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"math/rand"
 
-	"github.com/gorilla/mux"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/spf13/cobra"
 	abci "github.com/tendermint/tendermint/abci/types"
@@ -57,6 +56,7 @@ func (am AppModule) RegisterServices(cfg module.Configurator) {
 
 // RegisterLegacyAminoCodec registers the feegrant module's types for the given codec.
 func (AppModuleBasic) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+	feegrant.RegisterLegacyAminoCodec(cdc)
 }
 
 // RegisterInterfaces registers the feegrant module's interface types
@@ -84,10 +84,6 @@ func (a AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, config sdkclient.Tx
 
 	return feegrant.ValidateGenesis(data)
 }
-
-// RegisterRESTRoutes registers the REST routes for the feegrant module.
-// Deprecated: RegisterRESTRoutes is deprecated.
-func (AppModuleBasic) RegisterRESTRoutes(clientCtx sdkclient.Context, rtr *mux.Router) {}
 
 // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the feegrant module.
 func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *runtime.ServeMux) {

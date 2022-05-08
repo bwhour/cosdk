@@ -36,7 +36,7 @@ The Cosmos SDK gives developers maximum flexibility to define the state of their
 
 ## Tendermint
 
-Thanks to the Cosmos SDK, developers just have to define the state machine, and [*Tendermint*](https://tendermint.com/docs/introduction/what-is-tendermint.html) will handle replication over the network for them.
+Thanks to the Cosmos SDK, developers just have to define the state machine, and [*Tendermint*](https://docs.tendermint.com/master/introduction/what-is-tendermint.html) will handle replication over the network for them.
 
 ```text
                 ^  +-------------------------------+  ^
@@ -56,11 +56,11 @@ Blockchain node |  |           Consensus           |  |
 
 [Tendermint](https://docs.tendermint.com/v0.34/introduction/what-is-tendermint.html) is an application-agnostic engine that is responsible for handling the *networking* and *consensus* layers of a blockchain. In practice, this means that Tendermint is responsible for propagating and ordering transaction bytes. Tendermint Core relies on an eponymous Byzantine-Fault-Tolerant (BFT) algorithm to reach consensus on the order of transactions.
 
-The Tendermint [consensus algorithm](https://docs.tendermint.com/v0.34/introduction/what-is-tendermint.html#consensus-overview) works with a set of special nodes called *Validators*. Validators are responsible for adding blocks of transactions to the blockchain. At any given block, there is a validator set V. A validator in V is chosen by the algorithm to be the proposer of the next block. This block is considered valid if more than two thirds of V signed a *[prevote](https://docs.tendermint.com/v0.34/spec/consensus/consensus.html#prevote-step-height-h-round-r)* and a *[precommit](https://docs.tendermint.com/v0.34/spec/consensus/consensus.html#precommit-step-height-h-round-r)* on it, and if all the transactions that it contains are valid. The validator set can be changed by rules written in the state-machine.
+The Tendermint [consensus algorithm](https://docs.tendermint.com/v0.34/introduction/what-is-tendermint.html#consensus-overview) works with a set of special nodes called *Validators*. Validators are responsible for adding blocks of transactions to the blockchain. At any given block, there is a validator set V. A validator in V is chosen by the algorithm to be the proposer of the next block. This block is considered valid if more than two thirds of V signed a `prevote` and a `precommit` on it, and if all the transactions that it contains are valid. The validator set can be changed by rules written in the state-machine.
 
 ## ABCI
 
-Tendermint passes transactions to the application through an interface called the [ABCI](https://docs.tendermint.com/v0.34/spec/abci/), which the application must implement.
+Tendermint passes transactions to the application through an interface called the [ABCI](https://docs.tendermint.com/master/spec/abci/), which the application must implement.
 
 ```text
               +---------------------+
@@ -88,7 +88,7 @@ Here are the most important messages of the ABCI:
 * `DeliverTx`: When a [valid block](https://docs.tendermint.com/v0.34/spec/blockchain/blockchain.html#validation) is received by Tendermint Core, each transaction in the block is passed to the application via `DeliverTx` in order to be processed. It is during this stage that the state transitions occur. The `AnteHandler` executes again along with the actual [`Msg` service](../building-modules/msg-services.md) RPC for each message in the transaction.
 * `BeginBlock`/`EndBlock`: These messages are executed at the beginning and the end of each block, whether the block contains transaction or not. It is useful to trigger automatic execution of logic. Proceed with caution though, as computationally expensive loops could slow down your blockchain, or even freeze it if the loop is infinite.
 
-Find a more detailed view of the ABCI methods from the [Tendermint docs](https://docs.tendermint.com/v0.34/spec/abci/abci.html#overview).
+Find a more detailed view of the ABCI methods from the [Tendermint docs](https://docs.tendermint.com/v0.35/introduction/what-is-tendermint.html#abci-overview).
 
 Any application built on Tendermint needs to implement the ABCI interface in order to communicate with the underlying local Tendermint engine. Fortunately, you do not have to implement the ABCI interface. The Cosmos SDK provides a boilerplate implementation of it in the form of [baseapp](./sdk-design.md#baseapp).
 

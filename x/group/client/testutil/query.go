@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/testutil/cli"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -28,7 +29,7 @@ func (s *IntegrationTestSuite) TestQueryGroupInfo() {
 			"group not found",
 			[]string{"12345", fmt.Sprintf("--%s=json", tmcli.OutputFlag)},
 			true,
-			"not found: invalid request",
+			"group: not found",
 			0,
 		},
 		{
@@ -180,7 +181,7 @@ func (s *IntegrationTestSuite) TestQueryGroupMembers() {
 					Member: &group.Member{
 						Address:  val.Address.String(),
 						Weight:   "3",
-						Metadata: []byte{1},
+						Metadata: validMetadata,
 					},
 				},
 			},
@@ -295,7 +296,7 @@ func (s *IntegrationTestSuite) TestQueryGroupPolicyInfo() {
 			"group policy not found",
 			[]string{val.Address.String(), fmt.Sprintf("--%s=json", tmcli.OutputFlag)},
 			true,
-			"not found: invalid request",
+			"group policy: not found",
 			0,
 		},
 		{
@@ -326,7 +327,11 @@ func (s *IntegrationTestSuite) TestQueryGroupPolicyInfo() {
 				s.Require().Equal(s.groupPolicies[0].Admin, g.Admin)
 				s.Require().Equal(s.groupPolicies[0].Metadata, g.Metadata)
 				s.Require().Equal(s.groupPolicies[0].Version, g.Version)
-				s.Require().Equal(s.groupPolicies[0].GetDecisionPolicy(), g.GetDecisionPolicy())
+				dp1, err := s.groupPolicies[0].GetDecisionPolicy()
+				s.Require().NoError(err)
+				dp2, err := g.GetDecisionPolicy()
+				s.Require().NoError(err)
+				s.Require().Equal(dp1, dp2)
 			}
 		})
 	}
@@ -397,7 +402,11 @@ func (s *IntegrationTestSuite) TestQueryGroupPoliciesByGroup() {
 					s.Require().Equal(res.GroupPolicies[i].Metadata, tc.expectGroupPolicies[i].Metadata)
 					s.Require().Equal(res.GroupPolicies[i].Version, tc.expectGroupPolicies[i].Version)
 					s.Require().Equal(res.GroupPolicies[i].Admin, tc.expectGroupPolicies[i].Admin)
-					s.Require().Equal(res.GroupPolicies[i].GetDecisionPolicy(), tc.expectGroupPolicies[i].GetDecisionPolicy())
+					dp1, err := s.groupPolicies[i].GetDecisionPolicy()
+					s.Require().NoError(err)
+					dp2, err := tc.expectGroupPolicies[i].GetDecisionPolicy()
+					s.Require().NoError(err)
+					s.Require().Equal(dp1, dp2)
 				}
 			}
 		})
@@ -469,7 +478,11 @@ func (s *IntegrationTestSuite) TestQueryGroupPoliciesByAdmin() {
 					s.Require().Equal(res.GroupPolicies[i].Metadata, tc.expectGroupPolicies[i].Metadata)
 					s.Require().Equal(res.GroupPolicies[i].Version, tc.expectGroupPolicies[i].Version)
 					s.Require().Equal(res.GroupPolicies[i].Admin, tc.expectGroupPolicies[i].Admin)
-					s.Require().Equal(res.GroupPolicies[i].GetDecisionPolicy(), tc.expectGroupPolicies[i].GetDecisionPolicy())
+					dp1, err := s.groupPolicies[i].GetDecisionPolicy()
+					s.Require().NoError(err)
+					dp2, err := tc.expectGroupPolicies[i].GetDecisionPolicy()
+					s.Require().NoError(err)
+					s.Require().Equal(dp1, dp2)
 				}
 			}
 		})
@@ -749,4 +762,115 @@ func (s *IntegrationTestSuite) TestQueryVotesByVoter() {
 			}
 		})
 	}
+}
+
+func (s *IntegrationTestSuite) TestTallyResult() {
+	val := s.network.Validators[0]
+	clientCtx := val.ClientCtx
+
+	member := s.voter
+
+	var commonFlags = []string{
+		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
+		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastBlock),
+		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, sdk.NewInt(10))).String()),
+	}
+
+	// create a proposal
+	out, err := cli.ExecTestCLICmd(val.ClientCtx, client.MsgSubmitProposalCmd(),
+		append(
+			[]string{
+				s.createCLIProposal(
+					s.groupPolicies[0].Address, val.Address.String(),
+					s.groupPolicies[0].Address, val.Address.String(),
+					""),
+			},
+			commonFlags...,
+		),
+	)
+	s.Require().NoError(err, out.String())
+
+	var txResp sdk.TxResponse
+	s.Require().NoError(val.ClientCtx.Codec.UnmarshalJSON(out.Bytes(), &txResp), out.String())
+	s.Require().Equal(uint32(0), txResp.Code, out.String())
+	proposalId := s.getProposalIdFromTxResponse(txResp)
+
+	testCases := []struct {
+		name           string
+		args           []string
+		expectErr      bool
+		expTallyResult group.TallyResult
+		expectErrMsg   string
+		expectedCode   uint32
+	}{
+		{
+			"not found",
+			[]string{
+				"12345",
+				fmt.Sprintf("--%s=json", tmcli.OutputFlag),
+			},
+			true,
+			group.TallyResult{},
+			"not found",
+			0,
+		},
+		{
+			"invalid proposal id",
+			[]string{
+				"",
+				fmt.Sprintf("--%s=json", tmcli.OutputFlag),
+			},
+			true,
+			group.TallyResult{},
+			"strconv.ParseUint: parsing \"\": invalid syntax",
+			0,
+		},
+		{
+			"valid proposal id with no votes",
+			[]string{
+				proposalId,
+				fmt.Sprintf("--%s=json", tmcli.OutputFlag),
+			},
+			false,
+			group.DefaultTallyResult(),
+			"",
+			0,
+		},
+		{
+			"valid proposal id",
+			[]string{
+				"1",
+				fmt.Sprintf("--%s=json", tmcli.OutputFlag),
+			},
+			false,
+			group.TallyResult{
+				YesCount:        member.Weight,
+				AbstainCount:    "0",
+				NoCount:         "0",
+				NoWithVetoCount: "0",
+			},
+			"",
+			0,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+
+		s.Run(tc.name, func() {
+			cmd := client.QueryTallyResultCmd()
+
+			out, err := cli.ExecTestCLICmd(clientCtx, cmd, tc.args)
+			if tc.expectErr {
+				s.Require().Contains(out.String(), tc.expectErrMsg)
+			} else {
+				s.Require().NoError(err, out.String())
+				var tallyResultRes group.QueryTallyResultResponse
+				s.Require().NoError(clientCtx.Codec.UnmarshalJSON(out.Bytes(), &tallyResultRes))
+				s.Require().NotNil(tallyResultRes)
+				s.Require().Equal(tc.expTallyResult, tallyResultRes.Tally)
+			}
+		})
+	}
+
 }
