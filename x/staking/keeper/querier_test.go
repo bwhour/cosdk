@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"testing"
 
+	"cosmossdk.io/math"
 	"github.com/stretchr/testify/require"
 	abci "github.com/tendermint/tendermint/abci/types"
 	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/simapp"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/teststaking"
@@ -24,7 +26,7 @@ func TestNewQuerier(t *testing.T) {
 	addrVal1, _ := sdk.ValAddress(addrs[0]), sdk.ValAddress(addrs[1])
 
 	// Create Validators
-	amts := []sdk.Int{sdk.NewInt(9), sdk.NewInt(8)}
+	amts := []math.Int{sdk.NewInt(9), sdk.NewInt(8)}
 	var validators [2]types.Validator
 	for i, amt := range amts {
 		validators[i] = teststaking.NewValidator(t, sdk.ValAddress(addrs[i]), PKs[i])
@@ -143,7 +145,7 @@ func TestQueryValidators(t *testing.T) {
 	addrs := simapp.AddTestAddrs(app, ctx, 500, app.StakingKeeper.TokensFromConsensusPower(ctx, 10000))
 
 	// Create Validators
-	amts := []sdk.Int{sdk.NewInt(8), sdk.NewInt(7)}
+	amts := []math.Int{sdk.NewInt(8), sdk.NewInt(7)}
 	status := []types.BondStatus{types.Unbonded, types.Unbonding}
 	var validators [2]types.Validator
 	for i, amt := range amts {
@@ -211,7 +213,7 @@ func TestQueryDelegation(t *testing.T) {
 	addrAcc1, addrAcc2 := addrs[0], addrs[1]
 	addrVal1, addrVal2 := sdk.ValAddress(addrAcc1), sdk.ValAddress(addrAcc2)
 
-	pubKeys := simapp.CreateTestPubKeys(2)
+	pubKeys := simtestutil.CreateTestPubKeys(2)
 	pk1, pk2 := pubKeys[0], pubKeys[1]
 
 	// Create Validators and Delegation
@@ -458,7 +460,7 @@ func TestQueryValidatorDelegations_Pagination(t *testing.T) {
 	querier := keeper.NewQuerier(app.StakingKeeper, legacyQuerierCdc.LegacyAmino)
 
 	addrs := simapp.AddTestAddrs(app, ctx, 100, app.StakingKeeper.TokensFromConsensusPower(ctx, 10000))
-	pubKeys := simapp.CreateTestPubKeys(1)
+	pubKeys := simtestutil.CreateTestPubKeys(1)
 
 	valAddress := sdk.ValAddress(addrs[0])
 
