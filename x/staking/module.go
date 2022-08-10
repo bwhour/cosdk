@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"sort"
 
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -135,21 +134,6 @@ func (AppModule) Name() string {
 // RegisterInvariants registers the staking module invariants.
 func (am AppModule) RegisterInvariants(ir sdk.InvariantRegistry) {
 	keeper.RegisterInvariants(ir, am.keeper)
-}
-
-// Deprecated: Route returns the message routing key for the staking module.
-func (am AppModule) Route() sdk.Route {
-	return sdk.Route{}
-}
-
-// QuerierRoute returns the staking module's querier route name.
-func (AppModule) QuerierRoute() string {
-	return types.QuerierRoute
-}
-
-// LegacyQuerierHandler returns the staking module sdk.Querier.
-func (am AppModule) LegacyQuerierHandler(legacyQuerierCdc *codec.LegacyAmino) sdk.Querier {
-	return keeper.NewQuerier(am.keeper, legacyQuerierCdc)
 }
 
 // RegisterServices registers module services.
@@ -301,11 +285,6 @@ func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
 // ProposalContents doesn't return any content functions for governance proposals.
 func (AppModule) ProposalContents(simState module.SimulationState) []simtypes.WeightedProposalContent {
 	return nil
-}
-
-// RandomizedParams creates randomized staking param changes for the simulator.
-func (AppModule) RandomizedParams(r *rand.Rand) []simtypes.ParamChange {
-	return []simtypes.ParamChange{}
 }
 
 // RegisterStoreDecoder registers a decoder for staking module's types
