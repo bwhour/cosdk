@@ -3,7 +3,7 @@ go 1.18
 module github.com/cosmos/cosmos-sdk
 
 require (
-	cosmossdk.io/api v0.1.0-alpha9
+	cosmossdk.io/api v0.2.0
 	cosmossdk.io/core v0.2.0
 	cosmossdk.io/depinject v1.0.0-alpha.2
 	cosmossdk.io/errors v1.0.0-beta.7
@@ -101,6 +101,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/charithe/durationcheck v0.0.9 // indirect
 	github.com/chavacava/garif v0.0.0-20220630083739-93517212f375 // indirect
+	github.com/cosmos/gogoproto v1.4.1 // indirect
 	github.com/cosmos/gorocksdb v1.2.0 // indirect
 	github.com/cosmos/ledger-go v0.9.2 // indirect
 	github.com/creachadair/taskgroup v0.3.2 // indirect
