@@ -58,7 +58,7 @@ require (
 	google.golang.org/genproto v0.0.0-20220930163606-c98284e70a91
 	google.golang.org/grpc v1.50.0
 	google.golang.org/protobuf v1.28.1
-	pgregory.net/rapid v0.5.3
+	pgregory.net/rapid v0.5.5
 	sigs.k8s.io/yaml v1.3.0
 )
 
