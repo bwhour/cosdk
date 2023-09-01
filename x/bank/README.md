@@ -1,9 +1,6 @@
-<!--
-order: 0
-title: Bank Overview
-parent:
-  title: "bank"
--->
+---
+sidebar_position: 1
+---
 
 # `x/bank`
 
@@ -133,7 +130,9 @@ it can be updated with governance or the address with authority.
 
 * Params: `0x05 | ProtocolBuffer(Params)`
 
-+++ https://github.com/cosmos/cosmos-sdk/blob/v0.46.0-rc3/proto/cosmos/bank/v1beta1/bank.proto#L11-L16
+```protobuf reference
+https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/bank.proto#L12-L23
+```
 
 ## Keepers
 
@@ -196,28 +195,28 @@ type Keeper interface {
     SendKeeper
     WithMintCoinsRestriction(MintingRestrictionFn) BaseKeeper
 
-    InitGenesis(sdk.Context, *types.GenesisState)
-    ExportGenesis(sdk.Context) *types.GenesisState
+    InitGenesis(context.Context, *types.GenesisState)
+    ExportGenesis(context.Context) *types.GenesisState
 
-    GetSupply(ctx sdk.Context, denom string) sdk.Coin
-    HasSupply(ctx sdk.Context, denom string) bool
-    GetPaginatedTotalSupply(ctx sdk.Context, pagination *query.PageRequest) (sdk.Coins, *query.PageResponse, error)
-    IterateTotalSupply(ctx sdk.Context, cb func(sdk.Coin) bool)
-    GetDenomMetaData(ctx sdk.Context, denom string) (types.Metadata, bool)
-    HasDenomMetaData(ctx sdk.Context, denom string) bool
-    SetDenomMetaData(ctx sdk.Context, denomMetaData types.Metadata)
-    IterateAllDenomMetaData(ctx sdk.Context, cb func(types.Metadata) bool)
+    GetSupply(ctx context.Context, denom string) sdk.Coin
+    HasSupply(ctx context.Context, denom string) bool
+    GetPaginatedTotalSupply(ctx context.Context, pagination *query.PageRequest) (sdk.Coins, *query.PageResponse, error)
+    IterateTotalSupply(ctx context.Context, cb func(sdk.Coin) bool)
+    GetDenomMetaData(ctx context.Context, denom string) (types.Metadata, bool)
+    HasDenomMetaData(ctx context.Context, denom string) bool
+    SetDenomMetaData(ctx context.Context, denomMetaData types.Metadata)
+    IterateAllDenomMetaData(ctx context.Context, cb func(types.Metadata) bool)
 
-    SendCoinsFromModuleToAccount(ctx sdk.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins) error
-    SendCoinsFromModuleToModule(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins) error
-    SendCoinsFromAccountToModule(ctx sdk.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
-    DelegateCoinsFromAccountToModule(ctx sdk.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
-    UndelegateCoinsFromModuleToAccount(ctx sdk.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins) error
-    MintCoins(ctx sdk.Context, moduleName string, amt sdk.Coins) error
-    BurnCoins(ctx sdk.Context, moduleName string, amt sdk.Coins) error
+    SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins) error
+    SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
+    SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
+    DelegateCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
+    UndelegateCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins) error
+    MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
+    BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 
-    DelegateCoins(ctx sdk.Context, delegatorAddr, moduleAccAddr sdk.AccAddress, amt sdk.Coins) error
-    UndelegateCoins(ctx sdk.Context, moduleAccAddr, delegatorAddr sdk.AccAddress, amt sdk.Coins) error
+    DelegateCoins(ctx context.Context, delegatorAddr, moduleAccAddr sdk.AccAddress, amt sdk.Coins) error
+    UndelegateCoins(ctx context.Context, moduleAccAddr, delegatorAddr sdk.AccAddress, amt sdk.Coins) error
 
     // GetAuthority gets the address capable of executing governance proposal messages. Usually the gov module account.
     GetAuthority() string
@@ -237,23 +236,107 @@ accounts. The send keeper does not alter the total supply (mint or burn coins).
 type SendKeeper interface {
     ViewKeeper
 
-    InputOutputCoins(ctx sdk.Context, inputs []types.Input, outputs []types.Output) error
-    SendCoins(ctx sdk.Context, fromAddr sdk.AccAddress, toAddr sdk.AccAddress, amt sdk.Coins) error
+    AppendSendRestriction(restriction SendRestrictionFn)
+    PrependSendRestriction(restriction SendRestrictionFn)
+    ClearSendRestriction()
 
-    GetParams(ctx sdk.Context) types.Params
-    SetParams(ctx sdk.Context, params types.Params) error
+    InputOutputCoins(ctx context.Context, input types.Input, outputs []types.Output) error
+    SendCoins(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) error
 
-    IsSendEnabledDenom(ctx sdk.Context, denom string) bool
-    SetSendEnabled(ctx sdk.Context, denom string, value bool)
-    SetAllSendEnabled(ctx sdk.Context, sendEnableds []*types.SendEnabled)
-    DeleteSendEnabled(ctx sdk.Context, denom string)
-    IterateSendEnabledEntries(ctx sdk.Context, cb func(denom string, sendEnabled bool) (stop bool))
-    GetAllSendEnabledEntries(ctx sdk.Context) []types.SendEnabled
+    GetParams(ctx context.Context) types.Params
+    SetParams(ctx context.Context, params types.Params) error
 
-    IsSendEnabledCoin(ctx sdk.Context, coin sdk.Coin) bool
-    IsSendEnabledCoins(ctx sdk.Context, coins ...sdk.Coin) error
+    IsSendEnabledDenom(ctx context.Context, denom string) bool
+    SetSendEnabled(ctx context.Context, denom string, value bool)
+    SetAllSendEnabled(ctx context.Context, sendEnableds []*types.SendEnabled)
+    DeleteSendEnabled(ctx context.Context, denom string)
+    IterateSendEnabledEntries(ctx context.Context, cb func(denom string, sendEnabled bool) (stop bool))
+    GetAllSendEnabledEntries(ctx context.Context) []types.SendEnabled
+
+    IsSendEnabledCoin(ctx context.Context, coin sdk.Coin) bool
+    IsSendEnabledCoins(ctx context.Context, coins ...sdk.Coin) error
 
     BlockedAddr(addr sdk.AccAddress) bool
+}
+```
+
+#### Send Restrictions
+
+The `SendKeeper` applies a `SendRestrictionFn` before each transfer of funds.
+
+```golang
+// A SendRestrictionFn can restrict sends and/or provide a new receiver address.
+type SendRestrictionFn func(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) (newToAddr sdk.AccAddress, err error)
+```
+
+After the `SendKeeper` (or `BaseKeeper`) has been created, send restrictions can be added to it using the `AppendSendRestriction` or `PrependSendRestriction` functions.
+Both functions compose the provided restriction with any previously provided restrictions.
+`AppendSendRestriction` adds the provided restriction to be run after any previously provided send restrictions.
+`PrependSendRestriction` adds the restriction to be run before any previously provided send restrictions.
+The composition will short-circuit when an error is encountered. I.e. if the first one returns an error, the second is not run.
+
+During `SendCoins`, the send restriction is applied after coins are removed from the from address, but before adding them to the to address.
+During `InputOutputCoins`, the send restriction is applied after the input coins are removed and once for each output before the funds are added.
+
+A send restriction function should make use of a custom value in the context to allow bypassing that specific restriction.
+
+For example, in your module's keeper package, you'd define the send restriction function:
+
+```golang
+var _ banktypes.SendRestrictionFn = Keeper{}.SendRestrictionFn
+
+func (k Keeper) SendRestrictionFn(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) (sdk.AccAddress, error) {
+	// Bypass if the context says to.
+	if mymodule.HasBypass(ctx) {
+		return toAddr, nil
+	}
+
+	// Your custom send restriction logic goes here.
+	return nil, errors.New("not implemented")
+}
+```
+
+The bank keeper should be provided to your keeper's constructor so the send restriction can be added to it:
+
+```golang
+func NewKeeper(cdc codec.BinaryCodec, storeKey storetypes.StoreKey, bankKeeper mymodule.BankKeeper) Keeper {
+	rv := Keeper{/*...*/}
+	bankKeeper.AppendSendRestriction(rv.SendRestrictionFn)
+	return rv
+}
+```
+
+Then, in the `mymodule` package, define the context helpers:
+
+```golang
+const bypassKey = "bypass-mymodule-restriction"
+
+// WithBypass returns a new context that will cause the mymodule bank send restriction to be skipped.
+func WithBypass(ctx context.Context) context.Context {
+	return sdk.UnwrapSDKContext(ctx).WithValue(bypassKey, true)
+}
+
+// WithoutBypass returns a new context that will cause the mymodule bank send restriction to not be skipped.
+func WithoutBypass(ctx context.Context) context.Context {
+	return sdk.UnwrapSDKContext(ctx).WithValue(bypassKey, false)
+}
+
+// HasBypass checks the context to see if the mymodule bank send restriction should be skipped.
+func HasBypass(ctx context.Context) bool {
+	bypassValue := ctx.Value(bypassKey)
+	if bypassValue == nil {
+		return false
+	}
+	bypass, isBool := bypassValue.(bool)
+	return isBool && bypass
+}
+```
+
+Now, anywhere where you want to use `SendCoins` or `InputOutputCoins`, but you don't want your send restriction applied:
+
+```golang
+func (k Keeper) DoThing(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) error {
+	return k.bankKeeper.SendCoins(mymodule.WithBypass(ctx), fromAddr, toAddr, amt)
 }
 ```
 
@@ -265,18 +348,18 @@ The view keeper provides read-only access to account balances. The view keeper d
 // ViewKeeper defines a module interface that facilitates read only access to
 // account balances.
 type ViewKeeper interface {
-    ValidateBalance(ctx sdk.Context, addr sdk.AccAddress) error
-    HasBalance(ctx sdk.Context, addr sdk.AccAddress, amt sdk.Coin) bool
+    ValidateBalance(ctx context.Context, addr sdk.AccAddress) error
+    HasBalance(ctx context.Context, addr sdk.AccAddress, amt sdk.Coin) bool
 
-    GetAllBalances(ctx sdk.Context, addr sdk.AccAddress) sdk.Coins
-    GetAccountsBalances(ctx sdk.Context) []types.Balance
-    GetBalance(ctx sdk.Context, addr sdk.AccAddress, denom string) sdk.Coin
-    LockedCoins(ctx sdk.Context, addr sdk.AccAddress) sdk.Coins
-    SpendableCoins(ctx sdk.Context, addr sdk.AccAddress) sdk.Coins
-    SpendableCoin(ctx sdk.Context, addr sdk.AccAddress, denom string) sdk.Coin
+    GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins
+    GetAccountsBalances(ctx context.Context) []types.Balance
+    GetBalance(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
+    LockedCoins(ctx context.Context, addr sdk.AccAddress) sdk.Coins
+    SpendableCoins(ctx context.Context, addr sdk.AccAddress) sdk.Coins
+    SpendableCoin(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
 
-    IterateAccountBalances(ctx sdk.Context, addr sdk.AccAddress, cb func(coin sdk.Coin) (stop bool))
-    IterateAllBalances(ctx sdk.Context, cb func(address sdk.AccAddress, coin sdk.Coin) (stop bool))
+    IterateAccountBalances(ctx context.Context, addr sdk.AccAddress, cb func(coin sdk.Coin) (stop bool))
+    IterateAllBalances(ctx context.Context, cb func(address sdk.AccAddress, coin sdk.Coin) (stop bool))
 }
 ```
 
@@ -286,7 +369,9 @@ type ViewKeeper interface {
 
 Send coins from one address to another.
 
-+++ https://github.com/cosmos/cosmos-sdk/blob/v0.46.0/proto/cosmos/bank/v1beta1/tx.proto#L21-L32
+```protobuf reference
+https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L38-L53
+```
 
 The message will fail under the following conditions:
 
@@ -295,8 +380,11 @@ The message will fail under the following conditions:
 
 ### MsgMultiSend
 
-Send coins from and to a series of different address. If any of the receiving addresses do not correspond to an existing account, a new account is created.
-+++ https://github.com/cosmos/cosmos-sdk/blob/v0.46.0/proto/cosmos/bank/v1beta1/tx.proto#L37-L45
+Send coins from one sender and to a series of different address. If any of the receiving addresses do not correspond to an existing account, a new account is created.
+
+```protobuf reference
+https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L58-L69
+```
 
 The message will fail under the following conditions:
 
@@ -309,7 +397,9 @@ The message will fail under the following conditions:
 
 The `bank` module params can be updated through `MsgUpdateParams`, which can be done using governance proposal. The signer will always be the `gov` module account address. 
 
-+++ https://github.com/cosmos/cosmos-sdk/blob/e167855c9b99c4e58c1455533c6f88af5ff78ae1/proto/cosmos/bank/v1beta1/tx.proto#L56-L69
+```protobuf reference
+https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L74-L88
+```
 
 The message handling can fail if:
 
@@ -318,7 +408,10 @@ The message handling can fail if:
 ### MsgSetSendEnabled
 
 Used with the x/gov module to set create/edit SendEnabled entries.
-+++ https://github.com/cosmos/cosmos-sdk/blob/1bb627e7324278218560d2dd61e010881394f504/proto/cosmos/bank/v1beta1/tx.proto#L94-L107
+
+```protobuf reference
+https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L96-L117
+```
 
 The message will fail under the following conditions:
 
@@ -495,25 +588,25 @@ parameters.
 
 A user can query and interact with the `bank` module using the CLI.
 
-### Query
+#### Query
 
 The `query` commands allow users to query `bank` state.
 
-```sh
+```shell
 simd query bank --help
 ```
 
-#### balances
+##### balances
 
 The `balances` command allows users to query account balances by address.
 
-```sh
+```shell
 simd query bank balances [address] [flags]
 ```
 
 Example:
 
-```sh
+```shell
 simd query bank balances cosmos1..
 ```
 
@@ -528,17 +621,17 @@ pagination:
   total: "0"
 ```
 
-#### denom-metadata
+##### denom-metadata
 
 The `denom-metadata` command allows users to query metadata for coin denominations. A user can query metadata for a single denomination using the `--denom` flag or all denominations without it.
 
-```sh
+```shell
 simd query bank denom-metadata [flags]
 ```
 
 Example:
 
-```sh
+```shell
 simd query bank denom-metadata --denom stake
 ```
 
@@ -557,17 +650,17 @@ metadata:
   symbol: STK
 ```
 
-#### total
+##### total
 
 The `total` command allows users to query the total supply of coins. A user can query the total supply for a single coin using the `--denom` flag or all coins without it.
 
-```sh
+```shell
 simd query bank total [flags]
 ```
 
 Example:
 
-```sh
+```shell
 simd query bank total --denom stake
 ```
 
@@ -578,17 +671,17 @@ amount: "10000000000"
 denom: stake
 ```
 
-#### send-enabled
+##### send-enabled
 
 The `send-enabled` command allows users to query for all or some SendEnabled entries.
 
-```sh
+```shell
 simd query bank send-enabled [denom1 ...] [flags]
 ```
 
 Example:
 
-```sh
+```shell
 simd query bank send-enabled
 ```
 
@@ -604,25 +697,25 @@ pagination:
   total: 2 
 ```
 
-### Transactions
+#### Transactions
 
 The `tx` commands allow users to interact with the `bank` module.
 
-```sh
+```shell
 simd tx bank --help
 ```
 
-#### send
+##### send
 
 The `send` command allows users to send funds from one account to another.
 
-```sh
+```shell
 simd tx bank send [from_key_or_address] [to_address] [amount] [flags]
 ```
 
 Example:
 
-```sh
+```shell
 simd tx bank send cosmos1.. cosmos1.. 100stake
 ```
 
@@ -634,13 +727,13 @@ A user can query the `bank` module using gRPC endpoints.
 
 The `Balance` endpoint allows users to query account balance by address for a given denomination.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/Balance
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     -d '{"address":"cosmos1..","denom":"stake"}' \
     localhost:9090 \
@@ -662,13 +755,13 @@ Example Output:
 
 The `AllBalances` endpoint allows users to query account balance by address for all denominations.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/AllBalances
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     -d '{"address":"cosmos1.."}' \
     localhost:9090 \
@@ -695,13 +788,13 @@ Example Output:
 
 The `DenomMetadata` endpoint allows users to query metadata for a single coin denomination.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/DenomMetadata
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     -d '{"denom":"stake"}' \
     localhost:9090 \
@@ -734,13 +827,13 @@ Example Output:
 
 The `DenomsMetadata` endpoint allows users to query metadata for all coin denominations.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/DenomsMetadata
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     localhost:9090 \
     cosmos.bank.v1beta1.Query/DenomsMetadata
@@ -777,13 +870,13 @@ Example Output:
 
 The `DenomOwners` endpoint allows users to query metadata for a single coin denomination.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/DenomOwners
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     -d '{"denom":"stake"}' \
     localhost:9090 \
@@ -820,13 +913,13 @@ Example Output:
 
 The `TotalSupply` endpoint allows users to query the total supply of all coins.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/TotalSupply
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     localhost:9090 \
     cosmos.bank.v1beta1.Query/TotalSupply
@@ -852,13 +945,13 @@ Example Output:
 
 The `SupplyOf` endpoint allows users to query the total supply of a single coin.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/SupplyOf
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     -d '{"denom":"stake"}' \
     localhost:9090 \
@@ -880,13 +973,13 @@ Example Output:
 
 The `Params` endpoint allows users to query the parameters of the `bank` module.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/Params
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     localhost:9090 \
     cosmos.bank.v1beta1.Query/Params
@@ -908,13 +1001,13 @@ The `SendEnabled` enpoints allows users to query the SendEnabled entries of the 
 
 Any denominations NOT returned, use the `Params.DefaultSendEnabled` value.
 
-```sh
+```shell
 cosmos.bank.v1beta1.Query/SendEnabled
 ```
 
 Example:
 
-```sh
+```shell
 grpcurl -plaintext \
     localhost:9090 \
     cosmos.bank.v1beta1.Query/SendEnabled

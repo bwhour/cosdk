@@ -4,19 +4,19 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cosmos/cosmos-proto/generator"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/pluginpb"
 
 	ormv1 "cosmossdk.io/api/cosmos/orm/v1"
-	"github.com/cosmos/cosmos-proto/generator"
 )
 
 const (
 	contextPkg  = protogen.GoImportPath("context")
-	ormListPkg  = protogen.GoImportPath("github.com/cosmos/cosmos-sdk/orm/model/ormlist")
-	ormErrPkg   = protogen.GoImportPath("github.com/cosmos/cosmos-sdk/orm/types/ormerrors")
-	ormTablePkg = protogen.GoImportPath("github.com/cosmos/cosmos-sdk/orm/model/ormtable")
+	ormListPkg  = protogen.GoImportPath("cosmossdk.io/orm/model/ormlist")
+	ormErrPkg   = protogen.GoImportPath("cosmossdk.io/orm/types/ormerrors")
+	ormTablePkg = protogen.GoImportPath("cosmossdk.io/orm/model/ormtable")
 )
 
 func ORMPluginRunner(p *protogen.Plugin) error {
@@ -56,7 +56,7 @@ func QueryProtoPluginRunner(p *protogen.Plugin) error {
 			continue
 		}
 
-		out, err := os.OpenFile(fmt.Sprintf("%s_query.proto", f.GeneratedFilenamePrefix), os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
+		out, err := os.OpenFile(fmt.Sprintf("%s_query.proto", f.GeneratedFilenamePrefix), os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0o644)
 		if err != nil {
 			return err
 		}

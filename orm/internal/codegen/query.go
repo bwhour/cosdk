@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	ormv1 "cosmossdk.io/api/cosmos/orm/v1"
 	"github.com/iancoleman/strcase"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
@@ -13,7 +12,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	"github.com/cosmos/cosmos-sdk/orm/internal/fieldnames"
+	ormv1 "cosmossdk.io/api/cosmos/orm/v1"
+
+	"cosmossdk.io/orm/internal/fieldnames"
 )
 
 type queryProtoGen struct {
@@ -27,8 +28,8 @@ type queryProtoGen struct {
 func (g queryProtoGen) gen() error {
 	g.imports[g.Desc.Path()] = true
 
-	g.svc.F("// %s queries the state of the tables specified by %s.", g.queryServiceName(), g.Desc.Path())
-	g.svc.F("service %s {", g.queryServiceName())
+	g.svc.F("// %sService queries the state of the tables specified by %s.", g.queryServiceName(), g.Desc.Path())
+	g.svc.F("service %sService {", g.queryServiceName())
 	g.svc.Indent()
 	for _, msg := range g.Messages {
 		tableDesc := proto.GetExtension(msg.Desc.Options(), ormv1.E_Table).(*ormv1.TableDescriptor)
@@ -84,7 +85,7 @@ func (g queryProtoGen) gen() error {
 func (g queryProtoGen) genTableRPCMethods(msg *protogen.Message, desc *ormv1.TableDescriptor) error {
 	name := msg.Desc.Name()
 	g.svc.F("// Get queries the %s table by its primary key.", name)
-	g.svc.F("rpc Get%s (Get%sRequest) returns (Get%sResponse) {}", name, name, name) // TODO grpc gateway
+	g.svc.F("rpc Get%s(Get%sRequest) returns (Get%sResponse) {}", name, name, name) // TODO grpc gateway
 
 	g.startRequestType("Get%sRequest", name)
 	g.msgs.Indent()
@@ -118,7 +119,7 @@ func (g queryProtoGen) genTableRPCMethods(msg *protogen.Message, desc *ormv1.Tab
 		fieldsCamel := fieldsToCamelCase(idx.Fields)
 		methodName := fmt.Sprintf("Get%sBy%s", name, fieldsCamel)
 		g.svc.F("// %s queries the %s table by its %s index", methodName, name, fieldsCamel)
-		g.svc.F("rpc %s (%sRequest) returns (%sResponse) {}", methodName, methodName, methodName) // TODO grpc gateway
+		g.svc.F("rpc %s(%sRequest) returns (%sResponse) {}", methodName, methodName, methodName) // TODO grpc gateway
 
 		g.startRequestType("%sRequest", methodName)
 		g.msgs.Indent()
@@ -144,7 +145,7 @@ func (g queryProtoGen) genTableRPCMethods(msg *protogen.Message, desc *ormv1.Tab
 
 	g.imports["cosmos/base/query/v1beta1/pagination.proto"] = true
 	g.svc.F("// List%s queries the %s table using prefix and range queries against defined indexes.", name, name)
-	g.svc.F("rpc List%s (List%sRequest) returns (List%sResponse) {}", name, name, name) // TODO grpc gateway
+	g.svc.F("rpc List%s(List%sRequest) returns (List%sResponse) {}", name, name, name) // TODO grpc gateway
 	g.startRequestType("List%sRequest", name)
 	g.msgs.Indent()
 	g.msgs.F("// IndexKey specifies the value of an index key to use in prefix and range queries.")
@@ -231,7 +232,7 @@ func (g queryProtoGen) genTableRPCMethods(msg *protogen.Message, desc *ormv1.Tab
 func (g queryProtoGen) genSingletonRPCMethods(msg *protogen.Message) error {
 	name := msg.Desc.Name()
 	g.svc.F("// Get%s queries the %s singleton.", name, name)
-	g.svc.F("rpc Get%s (Get%sRequest) returns (Get%sResponse) {}", name, name, name) // TODO grpc gateway
+	g.svc.F("rpc Get%s(Get%sRequest) returns (Get%sResponse) {}", name, name, name) // TODO grpc gateway
 	g.startRequestType("Get%sRequest", name)
 	g.msgs.F("}")
 	g.msgs.F("")
@@ -243,6 +244,7 @@ func (g queryProtoGen) genSingletonRPCMethods(msg *protogen.Message) error {
 	g.msgs.F("")
 	return nil
 }
+
 func (g queryProtoGen) startRequestType(format string, args ...any) {
 	g.startRequestResponseType("request", format, args...)
 }
@@ -251,7 +253,7 @@ func (g queryProtoGen) startResponseType(format string, args ...any) {
 	g.startRequestResponseType("response", format, args...)
 }
 
-func (g queryProtoGen) startRequestResponseType(typ string, format string, args ...any) {
+func (g queryProtoGen) startRequestResponseType(typ, format string, args ...any) {
 	msgTypeName := fmt.Sprintf(format, args...)
 	g.msgs.F("// %s is the %s/%s %s type.", msgTypeName, g.queryServiceName(), msgTypeName, typ)
 	g.msgs.F("message %s {", msgTypeName)
@@ -298,11 +300,10 @@ func (w *writer) F(format string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-
 }
 
 func (w *writer) Indent() {
-	w.indent += 1
+	w.indent++
 	w.updateIndent()
 }
 
@@ -314,6 +315,6 @@ func (w *writer) updateIndent() {
 }
 
 func (w *writer) Dedent() {
-	w.indent -= 1
+	w.indent--
 	w.updateIndent()
 }
