@@ -17,7 +17,7 @@ require (
 	cosmossdk.io/x/nft v0.0.0-20230613133644-0a778132a60f // indirect
 	cosmossdk.io/x/tx v0.9.1
 	cosmossdk.io/x/upgrade v0.0.0-20230613133644-0a778132a60f
-	github.com/cometbft/cometbft v0.38.0-rc3
+	github.com/cometbft/cometbft v0.38.1
 	github.com/cosmos/cosmos-db v1.0.0
 	github.com/cosmos/cosmos-proto v1.0.0-beta.3
 	// this version is not used as it is always replaced by the latest Cosmos SDK version
@@ -26,7 +26,7 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.8.4
-	google.golang.org/grpc v1.57.0
+	google.golang.org/grpc v1.58.3
 	google.golang.org/protobuf v1.31.0
 	gotest.tools/v3 v3.5.0
 	pgregory.net/rapid v1.1.0
@@ -167,14 +167,14 @@ require (
 	github.com/zondax/ledger-go v0.14.1 // indirect
 	go.etcd.io/bbolt v1.3.7 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/crypto v0.12.0 // indirect
+	golang.org/x/crypto v0.14.0 // indirect
 	golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63 // indirect
-	golang.org/x/net v0.14.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
 	golang.org/x/sync v0.3.0 // indirect
-	golang.org/x/sys v0.11.0 // indirect
-	golang.org/x/term v0.11.0 // indirect
-	golang.org/x/text v0.12.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/term v0.13.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.134.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
