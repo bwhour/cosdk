@@ -8,16 +8,16 @@ require (
 	cosmossdk.io/depinject v1.0.0-alpha.4
 	cosmossdk.io/errors v1.0.0
 	github.com/cosmos/cosmos-db v1.0.0
-	github.com/cosmos/cosmos-proto v1.0.0-beta.3
+	github.com/cosmos/cosmos-proto v1.0.0-beta.4
 	github.com/golang/mock v1.6.0
-	github.com/google/go-cmp v0.5.9
+	github.com/google/go-cmp v0.6.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/regen-network/gocuke v0.6.3
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/exp v0.0.0-20230811145659-89c5cff77bcb
 	google.golang.org/grpc v1.57.0
-	google.golang.org/protobuf v1.31.0
-	gotest.tools/v3 v3.5.0
+	google.golang.org/protobuf v1.32.0
+	gotest.tools/v3 v3.5.1
 	pgregory.net/rapid v1.1.0
 )
 
