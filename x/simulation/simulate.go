@@ -13,6 +13,8 @@ import (
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 
+	"cosmossdk.io/core/header"
+
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -82,8 +84,10 @@ func SimulateFromSeed(
 	// Second variable to keep pending validator set (delayed one block since
 	// TM 0.24) Initially this is the same as the initial validator set
 	validators, blockTime, accs, chainID := initChain(r, params, accs, app, appStateFn, config, cdc)
-	if len(accs) == 0 {
-		return true, params, fmt.Errorf("must have greater than zero genesis accounts")
+	// At least 2 accounts must be added here, otherwise when executing SimulateMsgSend
+	// two accounts will be selected to meet the conditions from != to and it will fall into an infinite loop.
+	if len(accs) <= 1 {
+		return true, params, fmt.Errorf("at least two genesis accounts are required")
 	}
 
 	config.ChainID = chainID
@@ -190,6 +194,10 @@ func SimulateFromSeed(
 			Time:            blockTime,
 			ProposerAddress: proposerAddress,
 			ChainID:         config.ChainID,
+		}).WithHeaderInfo(header.Info{
+			Height:  blockHeight,
+			Time:    blockTime,
+			ChainID: config.ChainID,
 		})
 
 		// run queued operations; ignores block size if block size is too small
@@ -289,7 +297,7 @@ type blockSimFn func(
 ) (opCount int)
 
 // Returns a function to simulate blocks. Written like this to avoid constant
-// parameters being passed everytime, to minimize memory overhead.
+// parameters being passed every time, to minimize memory overhead.
 func createBlockSimulator(tb testing.TB, testingMode bool, w io.Writer, params Params,
 	event func(route, op, evResult string), ops WeightedOperations,
 	operationQueue OperationQueue, timeOperationQueue []simulation.FutureOperation,

@@ -15,10 +15,12 @@ import (
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/staking/types"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
+
+var timeBzKeySize = uint64(29) // time bytes key size is 29 by default
 
 // GetValidator gets a single validator
 func (k Keeper) GetValidator(ctx context.Context, addr sdk.ValAddress) (validator types.Validator, err error) {
@@ -32,36 +34,39 @@ func (k Keeper) GetValidator(ctx context.Context, addr sdk.ValAddress) (validato
 	return validator, nil
 }
 
-func (k Keeper) mustGetValidator(ctx context.Context, addr sdk.ValAddress) types.Validator {
-	validator, err := k.GetValidator(ctx, addr)
-	if err != nil {
-		panic(fmt.Sprintf("validator record not found for address: %X\n", addr))
-	}
-
-	return validator
-}
-
 // GetValidatorByConsAddr gets a single validator by consensus address
 func (k Keeper) GetValidatorByConsAddr(ctx context.Context, consAddr sdk.ConsAddress) (validator types.Validator, err error) {
 	opAddr, err := k.ValidatorByConsensusAddress.Get(ctx, consAddr)
-	if err != nil && !errors.Is(err, collections.ErrNotFound) {
-		return validator, err
+	if err != nil {
+		// if the validator not found try to find it in the map of `OldToNewConsKeyMap` because validator may've rotated it's key.
+		if !errors.Is(err, collections.ErrNotFound) {
+			return types.Validator{}, err
+		}
+
+		newConsAddr, err := k.OldToNewConsKeyMap.Get(ctx, consAddr.Bytes())
+		if err != nil {
+			if errors.Is(err, collections.ErrNotFound) {
+				return types.Validator{}, types.ErrNoValidatorFound
+			}
+			return types.Validator{}, err
+		}
+
+		operatorAddr, err := k.ValidatorByConsensusAddress.Get(ctx, newConsAddr)
+		if err != nil {
+			if errors.Is(err, collections.ErrNotFound) {
+				return types.Validator{}, types.ErrNoValidatorFound
+			}
+			return types.Validator{}, err
+		}
+
+		opAddr = operatorAddr
 	}
 
 	if opAddr == nil {
-		return validator, types.ErrNoValidatorFound
+		return types.Validator{}, types.ErrNoValidatorFound
 	}
 
 	return k.GetValidator(ctx, opAddr)
-}
-
-func (k Keeper) mustGetValidatorByConsAddr(ctx context.Context, consAddr sdk.ConsAddress) types.Validator {
-	validator, err := k.GetValidatorByConsAddr(ctx, consAddr)
-	if err != nil {
-		panic(fmt.Errorf("validator with consensus-Address %s not found", consAddr))
-	}
-
-	return validator
 }
 
 // SetValidator sets the main record holding validator details
@@ -95,7 +100,7 @@ func (k Keeper) SetValidatorByPowerIndex(ctx context.Context, validator types.Va
 		return nil
 	}
 
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 	str, err := k.validatorAddressCodec.StringToBytes(validator.GetOperator())
 	if err != nil {
 		return err
@@ -105,13 +110,13 @@ func (k Keeper) SetValidatorByPowerIndex(ctx context.Context, validator types.Va
 
 // DeleteValidatorByPowerIndex deletes a record by power index
 func (k Keeper) DeleteValidatorByPowerIndex(ctx context.Context, validator types.Validator) error {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 	return store.Delete(types.GetValidatorsByPowerIndexKey(validator, k.PowerReduction(ctx), k.validatorAddressCodec))
 }
 
 // SetNewValidatorByPowerIndex adds new entry by power index
 func (k Keeper) SetNewValidatorByPowerIndex(ctx context.Context, validator types.Validator) error {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 	str, err := k.validatorAddressCodec.StringToBytes(validator.GetOperator())
 	if err != nil {
 		return err
@@ -182,8 +187,7 @@ func (k Keeper) UpdateValidatorCommission(ctx context.Context,
 	validator types.Validator, newRate math.LegacyDec,
 ) (types.Commission, error) {
 	commission := validator.Commission
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	blockTime := sdkCtx.BlockHeader().Time
+	blockTime := k.environment.HeaderService.GetHeaderInfo(ctx).Time
 
 	if err := commission.ValidateNewRate(newRate, blockTime); err != nil {
 		return commission, err
@@ -227,7 +231,7 @@ func (k Keeper) RemoveValidator(ctx context.Context, address sdk.ValAddress) err
 	}
 
 	// delete the old validator record
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 	if err = k.Validators.Remove(ctx, address); err != nil {
 		return err
 	}
@@ -246,7 +250,7 @@ func (k Keeper) RemoveValidator(ctx context.Context, address sdk.ValAddress) err
 	}
 
 	if err := k.Hooks().AfterValidatorRemoved(ctx, valConsAddr, str); err != nil {
-		k.Logger(ctx).Error("error in after validator removed hook", "error", err)
+		return fmt.Errorf("error in after validator removed hook: %w", err)
 	}
 
 	return nil
@@ -256,7 +260,7 @@ func (k Keeper) RemoveValidator(ctx context.Context, address sdk.ValAddress) err
 
 // GetAllValidators gets the set of all validators with no limits, used during genesis dump
 func (k Keeper) GetAllValidators(ctx context.Context) (validators []types.Validator, err error) {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 
 	iterator, err := store.Iterator(types.ValidatorsKey, storetypes.PrefixEndBytes(types.ValidatorsKey))
 	if err != nil {
@@ -277,7 +281,7 @@ func (k Keeper) GetAllValidators(ctx context.Context) (validators []types.Valida
 
 // GetValidators returns a given amount of all the validators
 func (k Keeper) GetValidators(ctx context.Context, maxRetrieve uint32) (validators []types.Validator, err error) {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 	validators = make([]types.Validator, maxRetrieve)
 
 	iterator, err := store.Iterator(types.ValidatorsKey, storetypes.PrefixEndBytes(types.ValidatorsKey))
@@ -315,7 +319,10 @@ func (k Keeper) GetBondedValidatorsByPower(ctx context.Context) ([]types.Validat
 	i := 0
 	for ; iterator.Valid() && i < int(maxValidators); iterator.Next() {
 		address := iterator.Value()
-		validator := k.mustGetValidator(ctx, address)
+		validator, err := k.GetValidator(ctx, address)
+		if err != nil {
+			return nil, fmt.Errorf("validator record not found for address: %X", address)
+		}
 
 		if validator.IsBonded() {
 			validators[i] = validator
@@ -328,7 +335,7 @@ func (k Keeper) GetBondedValidatorsByPower(ctx context.Context) ([]types.Validat
 
 // ValidatorsPowerStoreIterator returns an iterator for the current validator power store
 func (k Keeper) ValidatorsPowerStoreIterator(ctx context.Context) (corestore.Iterator, error) {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 	return store.ReverseIterator(types.ValidatorsByPowerIndexKey, storetypes.PrefixEndBytes(types.ValidatorsByPowerIndexKey))
 }
 
@@ -337,31 +344,13 @@ func (k Keeper) ValidatorsPowerStoreIterator(ctx context.Context) (corestore.Ite
 // GetLastValidatorPower loads the last validator power.
 // Returns zero if the operator was not a validator last block.
 func (k Keeper) GetLastValidatorPower(ctx context.Context, operator sdk.ValAddress) (power int64, err error) {
-	bz, err := k.LastValidatorPower.Get(ctx, operator)
-	if err != nil {
-		return 0, err
-	}
-
-	if bz == nil {
-		return 0, nil
-	}
-
-	intV := gogotypes.Int64Value{}
-	err = k.cdc.Unmarshal(bz, &intV)
-	if err != nil {
-		return 0, err
-	}
-
-	return intV.GetValue(), nil
+	intV, err := k.LastValidatorPower.Get(ctx, operator)
+	return intV.GetValue(), err
 }
 
 // SetLastValidatorPower sets the last validator power.
 func (k Keeper) SetLastValidatorPower(ctx context.Context, operator sdk.ValAddress, power int64) error {
-	bz, err := k.cdc.Marshal(&gogotypes.Int64Value{Value: power})
-	if err != nil {
-		return err
-	}
-	return k.LastValidatorPower.Set(ctx, operator, bz)
+	return k.LastValidatorPower.Set(ctx, operator, gogotypes.Int64Value{Value: power})
 }
 
 // DeleteLastValidatorPower deletes the last validator power.
@@ -371,15 +360,10 @@ func (k Keeper) DeleteLastValidatorPower(ctx context.Context, operator sdk.ValAd
 
 // IterateLastValidatorPowers iterates over last validator powers.
 func (k Keeper) IterateLastValidatorPowers(ctx context.Context, handler func(operator sdk.ValAddress, power int64) (stop bool)) error {
-	err := k.LastValidatorPower.Walk(ctx, nil, func(key, value []byte) (bool, error) {
+	err := k.LastValidatorPower.Walk(ctx, nil, func(key []byte, value gogotypes.Int64Value) (bool, error) {
 		addr := sdk.ValAddress(key)
-		intV := &gogotypes.Int64Value{}
 
-		if err := k.cdc.Unmarshal(value, intV); err != nil {
-			return true, err
-		}
-
-		if handler(addr, intV.GetValue()) {
+		if handler(addr, value.GetValue()) {
 			return true, nil
 		}
 		return false, nil
@@ -398,13 +382,19 @@ func (k Keeper) GetLastValidators(ctx context.Context) (validators []types.Valid
 	if err != nil {
 		return nil, err
 	}
-	validators = make([]types.Validator, maxValidators)
 
 	i := 0
-	err = k.LastValidatorPower.Walk(ctx, nil, func(key, value []byte) (bool, error) {
-		// sanity check
+	validators = make([]types.Validator, maxValidators)
+
+	err = k.LastValidatorPower.Walk(ctx, nil, func(key []byte, _ gogotypes.Int64Value) (bool, error) {
+		// Note, we do NOT error here as the MaxValidators param may change via on-chain
+		// governance. In cases where the param is increased, this case should never
+		// be hit. In cases where the param is decreased, we will simply not return
+		// the remainder of the validator set, as the ApplyAndReturnValidatorSetUpdates
+		// call should ensure the validators past the cliff will be moved to the
+		// unbonding set.
 		if i >= int(maxValidators) {
-			panic("more validators than maxValidators found")
+			return true, nil
 		}
 
 		validator, err := k.GetValidator(ctx, key)
@@ -414,6 +404,7 @@ func (k Keeper) GetLastValidators(ctx context.Context) (validators []types.Valid
 
 		validators[i] = validator
 		i++
+
 		return false, nil
 	})
 	if err != nil {
@@ -426,34 +417,20 @@ func (k Keeper) GetLastValidators(ctx context.Context) (validators []types.Valid
 // GetUnbondingValidators returns a slice of mature validator addresses that
 // complete their unbonding at a given time and height.
 func (k Keeper) GetUnbondingValidators(ctx context.Context, endTime time.Time, endHeight int64) ([]string, error) {
-	store := k.storeService.OpenKVStore(ctx)
-
-	bz, err := store.Get(types.GetValidatorQueueKey(endTime, endHeight))
-	if err != nil {
-		return nil, err
+	timeSize := sdk.TimeKey.Size(endTime)
+	valAddrs, err := k.ValidatorQueue.Get(ctx, collections.Join3(uint64(timeSize), endTime, uint64(endHeight)))
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return []string{}, err
 	}
 
-	if bz == nil {
-		return []string{}, nil
-	}
-
-	addrs := types.ValAddresses{}
-	if err = k.cdc.Unmarshal(bz, &addrs); err != nil {
-		return nil, err
-	}
-
-	return addrs.Addresses, nil
+	return valAddrs.Addresses, nil
 }
 
 // SetUnbondingValidatorsQueue sets a given slice of validator addresses into
 // the unbonding validator queue by a given height and time.
 func (k Keeper) SetUnbondingValidatorsQueue(ctx context.Context, endTime time.Time, endHeight int64, addrs []string) error {
-	store := k.storeService.OpenKVStore(ctx)
-	bz, err := k.cdc.Marshal(&types.ValAddresses{Addresses: addrs})
-	if err != nil {
-		return err
-	}
-	return store.Set(types.GetValidatorQueueKey(endTime, endHeight), bz)
+	valAddrs := types.ValAddresses{Addresses: addrs}
+	return k.ValidatorQueue.Set(ctx, collections.Join3(timeBzKeySize, endTime, uint64(endHeight)), valAddrs)
 }
 
 // InsertUnbondingValidatorQueue inserts a given unbonding validator address into
@@ -470,8 +447,7 @@ func (k Keeper) InsertUnbondingValidatorQueue(ctx context.Context, val types.Val
 // DeleteValidatorQueueTimeSlice deletes all entries in the queue indexed by a
 // given height and time.
 func (k Keeper) DeleteValidatorQueueTimeSlice(ctx context.Context, endTime time.Time, endHeight int64) error {
-	store := k.storeService.OpenKVStore(ctx)
-	return store.Delete(types.GetValidatorQueueKey(endTime, endHeight))
+	return k.ValidatorQueue.Remove(ctx, collections.Join3(timeBzKeySize, endTime, uint64(endHeight)))
 }
 
 // DeleteValidatorQueue removes a validator by address from the unbonding queue
@@ -508,92 +484,100 @@ func (k Keeper) DeleteValidatorQueue(ctx context.Context, val types.Validator) e
 	return k.SetUnbondingValidatorsQueue(ctx, val.UnbondingTime, val.UnbondingHeight, newAddrs)
 }
 
-// ValidatorQueueIterator returns an interator ranging over validators that are
-// unbonding whose unbonding completion occurs at the given height and time.
-func (k Keeper) ValidatorQueueIterator(ctx context.Context, endTime time.Time, endHeight int64) (corestore.Iterator, error) {
-	store := k.storeService.OpenKVStore(ctx)
-	return store.Iterator(types.ValidatorQueueKey, storetypes.InclusiveEndBytes(types.GetValidatorQueueKey(endTime, endHeight)))
-}
-
 // UnbondAllMatureValidators unbonds all the mature unbonding validators that
 // have finished their unbonding period.
 func (k Keeper) UnbondAllMatureValidators(ctx context.Context) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	blockTime := sdkCtx.BlockTime()
-	blockHeight := sdkCtx.BlockHeight()
+	headerInfo := k.environment.HeaderService.GetHeaderInfo(ctx)
+	blockTime := headerInfo.Time
+	blockHeight := uint64(headerInfo.Height)
 
-	// unbondingValIterator will contains all validator addresses indexed under
-	// the ValidatorQueueKey prefix. Note, the entire index key is composed as
-	// ValidatorQueueKey | timeBzLen (8-byte big endian) | timeBz | heightBz (8-byte big endian),
-	// so it may be possible that certain validator addresses that are iterated
-	// over are not ready to unbond, so an explicit check is required.
-	unbondingValIterator, err := k.ValidatorQueueIterator(ctx, blockTime, blockHeight)
+	rng := new(collections.Range[collections.Triple[uint64, time.Time, uint64]]).
+		EndInclusive(collections.Join3(uint64(29), blockTime, blockHeight))
+
+	// get all the values before performing any delete operations
+	iter, err := k.ValidatorQueue.Iterate(ctx, rng)
 	if err != nil {
 		return err
 	}
-	defer unbondingValIterator.Close()
 
-	for ; unbondingValIterator.Valid(); unbondingValIterator.Next() {
-		key := unbondingValIterator.Key()
-		keyTime, keyHeight, err := types.ParseValidatorQueueKey(key)
+	kvs, err := iter.KeyValues()
+	if err != nil {
+		return err
+	}
+
+	for _, kv := range kvs {
+		if err := k.unbondMatureValidators(ctx, blockHeight, blockTime, kv.Key, kv.Value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (k Keeper) unbondMatureValidators(
+	ctx context.Context,
+	blockHeight uint64,
+	blockTime time.Time,
+	key collections.Triple[uint64, time.Time, uint64],
+	addrs types.ValAddresses,
+) error {
+	keyTime, keyHeight := key.K2(), key.K3()
+
+	// All addresses for the given key have the same unbonding height and time.
+	// We only unbond if the height and time are less than the current height
+	// and time.
+	if keyHeight > blockHeight || keyTime.After(blockTime) {
+		return nil
+	}
+
+	// finalize unbonding
+	for _, valAddr := range addrs.Addresses {
+		addr, err := k.validatorAddressCodec.StringToBytes(valAddr)
 		if err != nil {
-			return fmt.Errorf("failed to parse unbonding key: %w", err)
+			return err
+		}
+		val, err := k.GetValidator(ctx, addr)
+		if err != nil {
+			return errorsmod.Wrap(err, "validator in the unbonding queue was not found")
 		}
 
-		// All addresses for the given key have the same unbonding height and time.
-		// We only unbond if the height and time are less than the current height
-		// and time.
-		if keyHeight <= blockHeight && (keyTime.Before(blockTime) || keyTime.Equal(blockTime)) {
-			addrs := types.ValAddresses{}
-			if err = k.cdc.Unmarshal(unbondingValIterator.Value(), &addrs); err != nil {
+		if !val.IsUnbonding() {
+			return fmt.Errorf("unexpected validator in unbonding queue; status was not unbonding")
+		}
+
+		// if the ref count is not zero, early exit.
+		if val.UnbondingOnHoldRefCount != 0 {
+			return nil
+		}
+
+		// otherwise do proper unbonding
+		for _, id := range val.UnbondingIds {
+			if err = k.DeleteUnbondingIndex(ctx, id); err != nil {
 				return err
 			}
+		}
 
-			for _, valAddr := range addrs.Addresses {
-				addr, err := k.validatorAddressCodec.StringToBytes(valAddr)
-				if err != nil {
-					return err
-				}
-				val, err := k.GetValidator(ctx, addr)
-				if err != nil {
-					return errorsmod.Wrap(err, "validator in the unbonding queue was not found")
-				}
+		val, err = k.UnbondingToUnbonded(ctx, val)
+		if err != nil {
+			return err
+		}
 
-				if !val.IsUnbonding() {
-					return fmt.Errorf("unexpected validator in unbonding queue; status was not unbonding")
-				}
-
-				if val.UnbondingOnHoldRefCount == 0 {
-					for _, id := range val.UnbondingIds {
-						if err = k.DeleteUnbondingIndex(ctx, id); err != nil {
-							return err
-						}
-					}
-
-					val, err = k.UnbondingToUnbonded(ctx, val)
-					if err != nil {
-						return err
-					}
-
-					if val.GetDelegatorShares().IsZero() {
-						str, err := k.validatorAddressCodec.StringToBytes(val.GetOperator())
-						if err != nil {
-							return err
-						}
-						if err = k.RemoveValidator(ctx, str); err != nil {
-							return err
-						}
-					} else {
-						// remove unbonding ids
-						val.UnbondingIds = []uint64{}
-					}
-
-					// remove validator from queue
-					if err = k.DeleteValidatorQueue(ctx, val); err != nil {
-						return err
-					}
-				}
+		if val.GetDelegatorShares().IsZero() {
+			str, err := k.validatorAddressCodec.StringToBytes(val.GetOperator())
+			if err != nil {
+				return err
 			}
+			if err = k.RemoveValidator(ctx, str); err != nil {
+				return err
+			}
+		} else {
+			// remove unbonding ids
+			val.UnbondingIds = []uint64{}
+		}
+
+		// remove validator from queue
+		if err = k.DeleteValidatorQueue(ctx, val); err != nil {
+			return err
 		}
 	}
 	return nil

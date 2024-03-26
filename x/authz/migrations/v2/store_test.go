@@ -6,24 +6,27 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	govtypes "cosmossdk.io/api/cosmos/gov/v1beta1"
+	"cosmossdk.io/core/header"
+	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/authz"
+	v2 "cosmossdk.io/x/authz/migrations/v2"
+	authzmodule "cosmossdk.io/x/authz/module"
+	"cosmossdk.io/x/bank"
+	banktypes "cosmossdk.io/x/bank/types"
 
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	"github.com/cosmos/cosmos-sdk/x/authz"
-	v2 "github.com/cosmos/cosmos-sdk/x/authz/migrations/v2"
-	authzmodule "github.com/cosmos/cosmos-sdk/x/authz/module"
-	"github.com/cosmos/cosmos-sdk/x/bank"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 )
 
 func TestMigration(t *testing.T) {
-	encodingConfig := moduletestutil.MakeTestEncodingConfig(authzmodule.AppModuleBasic{}, bank.AppModuleBasic{})
+	encodingConfig := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, authzmodule.AppModule{}, bank.AppModule{})
 	cdc := encodingConfig.Codec
 
 	authzKey := storetypes.NewKVStoreKey("authz")
@@ -36,7 +39,7 @@ func TestMigration(t *testing.T) {
 	sendMsgType := banktypes.SendAuthorization{}.MsgTypeURL()
 	genericMsgType := sdk.MsgTypeURL(&govtypes.MsgVote{})
 	coins100 := sdk.NewCoins(sdk.NewInt64Coin("atom", 100))
-	blockTime := ctx.BlockTime()
+	blockTime := ctx.HeaderInfo().Time
 	oneDay := blockTime.AddDate(0, 0, 1)
 	oneYear := blockTime.AddDate(1, 0, 0)
 	sendAuthz := banktypes.NewSendAuthorization(coins100, nil)
@@ -103,6 +106,7 @@ func TestMigration(t *testing.T) {
 
 	storeService := runtime.NewKVStoreService(authzKey)
 	store := storeService.OpenKVStore(ctx)
+	env := runtime.NewEnvironment(storeService, log.NewNopLogger())
 
 	for _, g := range grants {
 		grant := g.authorization()
@@ -110,8 +114,8 @@ func TestMigration(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	ctx = ctx.WithBlockTime(ctx.BlockTime().Add(1 * time.Hour))
-	require.NoError(t, v2.MigrateStore(ctx, storeService, cdc))
+	ctx = ctx.WithHeaderInfo(header.Info{Time: ctx.HeaderInfo().Time.Add(1 * time.Hour)})
+	require.NoError(t, v2.MigrateStore(ctx, env, cdc))
 
 	bz, err := store.Get(v2.GrantStoreKey(grantee1, granter2, genericMsgType))
 	require.NoError(t, err)

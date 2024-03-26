@@ -101,7 +101,7 @@ func (l Launcher) Run(args []string, stdout, stderr io.Writer) (bool, error) {
 // It returns (true, nil) if an upgrade should be initiated (and we killed the process)
 // It returns (false, err) if the process died by itself
 // It returns (false, nil) if the process exited normally without triggering an upgrade. This is very unlikely
-// to happen with "start" but may happen with short-lived commands like `simd export ...`
+// to happen with "start" but may happen with short-lived commands like `simd genesis export ...`
 func (l Launcher) WaitForUpgradeOrExit(cmd *exec.Cmd) (bool, error) {
 	currentUpgrade, err := l.cfg.UpgradeInfo()
 	if err != nil {
@@ -180,8 +180,8 @@ func (l Launcher) doBackup() error {
 
 		// a destination directory, Format YYYY-MM-DD
 		st := time.Now()
-		stStr := fmt.Sprintf("%d-%d-%d", st.Year(), st.Month(), st.Day())
-		dst := filepath.Join(l.cfg.DataBackupPath, fmt.Sprintf("data"+"-backup-%s", stStr))
+		ymd := fmt.Sprintf("%d-%d-%d", st.Year(), st.Month(), st.Day())
+		dst := filepath.Join(l.cfg.DataBackupPath, fmt.Sprintf("data"+"-backup-%s", ymd))
 
 		l.logger.Info("starting to take backup of data directory", "backup start time", st)
 

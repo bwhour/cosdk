@@ -2,17 +2,18 @@ package keeper_test
 
 import (
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/params"
+	paramskeeper "cosmossdk.io/x/params/keeper"
 
 	"github.com/cosmos/cosmos-sdk/codec"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	sdktestutil "github.com/cosmos/cosmos-sdk/testutil"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	"github.com/cosmos/cosmos-sdk/x/params"
-	paramskeeper "github.com/cosmos/cosmos-sdk/x/params/keeper"
 )
 
 func testComponents() (*codec.LegacyAmino, sdk.Context, storetypes.StoreKey, storetypes.StoreKey, paramskeeper.Keeper) {
-	encodingConfig := moduletestutil.MakeTestEncodingConfig(params.AppModuleBasic{})
+	encodingConfig := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, params.AppModule{})
 	cdc := encodingConfig.Codec
 
 	legacyAmino := createTestCodec()

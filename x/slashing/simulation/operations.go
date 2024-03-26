@@ -4,6 +4,9 @@ import (
 	"errors"
 	"math/rand"
 
+	"cosmossdk.io/x/slashing/keeper"
+	"cosmossdk.io/x/slashing/types"
+
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -13,8 +16,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
 	"github.com/cosmos/cosmos-sdk/x/simulation"
-	"github.com/cosmos/cosmos-sdk/x/slashing/keeper"
-	"github.com/cosmos/cosmos-sdk/x/slashing/types"
 )
 
 // Simulation operation weights constants
@@ -109,7 +110,7 @@ func SimulateMsgUnjail(
 		account := ak.GetAccount(ctx, sdk.AccAddress(bz))
 		spendable := bk.SpendableCoins(ctx, account.GetAddress())
 
-		fees, err := simtypes.RandomFees(r, ctx, spendable)
+		fees, err := simtypes.RandomFees(r, spendable)
 		if err != nil {
 			return simtypes.NoOpMsg(types.ModuleName, msgType, "unable to generate fees"), nil, err
 		}
@@ -138,13 +139,13 @@ func SimulateMsgUnjail(
 		// - validator is still in jailed period
 		// - self delegation too low
 		if info.Tombstoned ||
-			ctx.BlockHeader().Time.Before(info.JailedUntil) ||
+			ctx.HeaderInfo().Time.Before(info.JailedUntil) ||
 			validator.TokensFromShares(selfDel.GetShares()).TruncateInt().LT(validator.GetMinSelfDelegation()) {
 			if res != nil && err == nil {
 				if info.Tombstoned {
 					return simtypes.NewOperationMsg(msg, true, ""), nil, errors.New("validator should not have been unjailed if validator tombstoned")
 				}
-				if ctx.BlockHeader().Time.Before(info.JailedUntil) {
+				if ctx.HeaderInfo().Time.Before(info.JailedUntil) {
 					return simtypes.NewOperationMsg(msg, true, ""), nil, errors.New("validator unjailed while validator still in jail period")
 				}
 				if validator.TokensFromShares(selfDel.GetShares()).TruncateInt().LT(validator.GetMinSelfDelegation()) {

@@ -32,6 +32,7 @@ network.
     * [Redelegation](#redelegation)
     * [Queues](#queues)
     * [HistoricalInfo](#historicalinfo)
+    * [ConsPubkeyRotation](#conspubkeyrotation)
 * [State Transitions](#state-transitions)
     * [Validators](#validators)
     * [Delegations](#delegations)
@@ -45,6 +46,7 @@ network.
     * [MsgCancelUnbondingDelegation](#msgcancelunbondingdelegation)
     * [MsgBeginRedelegate](#msgbeginredelegate)
     * [MsgUpdateParams](#msgupdateparams)
+    * [MsgRotateConsPubkey](#msgrotateconspubkey)
 * [Begin-Block](#begin-block)
     * [Historical Info Tracking](#historical-info-tracking)
 * [End-Block](#end-block)
@@ -75,14 +77,14 @@ Store entries prefixed with "Last" must remain unchanged until EndBlock.
 
 ### ValidatorUpdates
 
-ValidatorUpdates contains the validator updates returned to ABCI at the end of every block. 
-The values are overwritten in every block. 
+ValidatorUpdates contains the validator updates returned to ABCI at the end of every block.
+The values are overwritten in every block.
 
 * ValidatorUpdates `0x61 -> []abci.ValidatorUpdate`
 
 ### UnbondingID
 
-UnbondingID stores the ID of the latest unbonding operation. It enables to create unique IDs for unbonding operation, i.e., UnbondingID is incremented every time a new unbonding operation (validator unbonding, unbonding delegation, redelegation) is initiated.
+UnbondingID stores the ID of the latest unbonding operation. It enables creating unique IDs for unbonding operations, i.e., UnbondingID is incremented every time a new unbonding operation (validator unbonding, unbonding delegation, redelegation) is initiated.
 
 * UnbondingID: `0x37 -> uint64`
 
@@ -115,7 +117,7 @@ Validators can have one of three statuses
   before their tokens are moved to their accounts from the `BondedPool`.
 
 :::warning
-Tombstoning is permanent, once tombstoned a validators consensus key can not be reused within the chain where the tombstoning happened. 
+Tombstoning is permanent, once tombstoned a validator's consensus key can not be reused within the chain where the tombstoning happened.
 :::
 
 Validators objects should be primarily stored and accessed by the
@@ -137,7 +139,7 @@ associated validator, where the public key of that validator can change in the
 future. Delegators can refer to the immutable operator of the validator, without
 concern for the changing public key.
 
-`ValidatorsByUnbondingID` is an additional index that enables lookups for 
+`ValidatorsByUnbondingID` is an additional index that enables lookups for
  validators by the unbonding IDs corresponding to their current unbonding.
 
 `ValidatorByConsAddr` is an additional index that enables lookups for slashing.
@@ -182,7 +184,7 @@ https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/staking/v1bet
 
 #### Delegator Shares
 
-When one Delegates tokens to a Validator they are issued a number of delegator shares based on a
+When one delegates tokens to a Validator, they are issued a number of delegator shares based on a
 dynamic exchange rate, calculated as follows from the total number of tokens delegated to the
 validator and the number of shares issued so far:
 
@@ -196,7 +198,7 @@ hold and the inverse exchange rate:
 
 These `Shares` are simply an accounting mechanism. They are not a fungible asset. The reason for
 this mechanism is to simplify the accounting around slashing. Rather than iteratively slashing the
-tokens of every delegation entry, instead the Validators total bonded tokens can be slashed,
+tokens of every delegation entry, instead the Validator's total bonded tokens can be slashed,
 effectively reducing the value of each issued delegator share.
 
 ### UnbondingDelegation
@@ -217,8 +219,8 @@ detected.
  unbonding delegations associated with a given validator that need to be
  slashed.
 
- `UnbondingDelegationByUnbondingId` is an additional index that enables 
- lookups for unbonding delegations by the unbonding IDs of the containing 
+ `UnbondingDelegationByUnbondingId` is an additional index that enables
+ lookups for unbonding delegations by the unbonding IDs of the containing
  unbonding delegation entries.
 
 
@@ -254,8 +256,8 @@ The first map here is used for queries, to lookup all redelegations for a given
 delegator. The second map is used for slashing based on the `ValidatorSrcAddr`,
 while the third map is for slashing based on the `ValidatorDstAddr`.
 
-`RedelegationByUnbondingId` is an additional index that enables 
- lookups for redelegations by the unbonding IDs of the containing 
+`RedelegationByUnbondingId` is an additional index that enables
+ lookups for redelegations by the unbonding IDs of the containing
  redelegation entries.
 
 A redelegation object is created every time a redelegation occurs. To prevent
@@ -270,15 +272,50 @@ A redelegation object is created every time a redelegation occurs. To prevent
 https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/staking/v1beta1/staking.proto#L263-L308
 ```
 
+## ConsPubkeyRotation
+
+The `ConsPubkey` of a validator will be instantly rotated to the new `ConsPubkey`. The rotation will be tracked to only allow a limited number of rotations within an unbonding period of time.
+
+`ConsPubkeyRotation` are indexed in the store as:
+
+ValidatorConsPubKeyRotationHistoryKey: `101 | valAddr | rotatedHeight -> ProtocolBuffer(ConsPubKeyRotationHistory)`555682
+
+BlockConsPubKeyRotationHistoryKey (index): `102 | rotatedHeight | valAddr | -> ProtocolBuffer(ConsPubKeyRotationHistory)`
+
+ValidatorConsensusKeyRotationRecordQueueKey: `103 | format(time) -> ProtocolBuffer(ValAddrsOfRotatedConsKeys)`
+
+ValidatorConsensusKeyRotationRecordIndexKey:`104 | valAddr | format(time) -> ProtocolBuffer([]Byte{})`
+
+OldToNewConsKeyMap:`105 | byte(oldConsKey) -> byte(newConsKey)`
+
+NewToOldConsKeyMap:`106 | byte(newConsKey) -> byte(oldConsKey)`
+
+`ConsPubKeyRotationHistory` is used for querying the rotations of a validator
+
+`ValidatorConsensusKeyRotationRecordQueueKey` is to keep track of the rotation across the unbonding period (waiting period in the queue), this will be pruned after the unbonding period of waiting time.
+
+`ValidatorConsensusKeyRotationRecordIndexKey` is to keep track of a validator that how many rotations were made inside unbonding period. This will be pruned after the unbonding period of waiting time.
+
+A `ConsPubKeyRotationHistory` object is created every time a consensus pubkey rotation occurs.
+
+An entry is added in `OldToNewConsKeyMap` collection for every rotation (Note: this is to handle the evidences when submitted with old cons key).
+
+An entry is added in `NewToOldConsKeyMap` collection for every rotation, this entry is to block the rotation if the validator is rotating to the cons key which is invovled in the history.
+
+To prevent the spam: 
+
+* There will only limited number of rotations can be done within unbonding period of time. 
+* A non-negligible fee will be deducted for rotating a consensus key.
+
 ### Queues
 
-All queues objects are sorted by timestamp. The time used within any queue is
-first rounded to the nearest nanosecond then sorted. The sortable time format
+All queue objects are sorted by timestamp. The time used within any queue is
+firstly converted to UTC, rounded to the nearest nanosecond then sorted. The sortable time format
 used is a slight modification of the RFC3339Nano and uses the format string
 `"2006-01-02T15:04:05.000000000"`. Notably this format:
 
 * right pads all zeros
-* drops the time zone info (uses UTC)
+* drops the time zone info (we already use UTC)
 
 In all cases, the stored timestamp represents the maturation time of the queue
 element.
@@ -312,10 +349,25 @@ queue is kept.
 
 * ValidatorQueueTime: `0x43 | format(time) -> []sdk.ValAddress`
 
-The stored object as each key is an array of validator operator addresses from
+The stored object by each key is an array of validator operator addresses from
 which the validator object can be accessed. Typically it is expected that only
 a single validator record will be associated with a given timestamp however it is possible
 that multiple validators exist in the queue at the same location.
+
+#### ValidatorConsensusKeyRotationRecordQueueKey
+
+For the purpose of tracking progress or consensus pubkey rotations the `ValidatorConsensusKeyRotationRecordQueueKey` kept.
+
+* ValidatorConsensusKeyRotationRecordQueueKey: `103 | format(time) -> types.ValAddrsOfRotatedConsKeys`
+
+Here timestamp will be the unique identifier in the queue which is of future time 
+(which is calculated with the current block time adding with unbonding period),
+Whenever the next item with the same waiting time comes to the queue, we will get
+the present store info and append the `ValAddress` to the array and set it back in the store.
+
+```protobuf reference
+https://github.com/cosmos/cosmos-sdk/blob/8f0d5b15f0b10da7645d7fc1aa868fe44e3f3a44/proto/cosmos/staking/v1beta1/staking.proto#L429-L433
+```
 
 ### HistoricalInfo
 
@@ -415,16 +467,16 @@ Delegation may be called.
   shares from the `BondedPool` to the `NotBondedPool` `ModuleAccount`
 * remove the validator if it is unbonded and there are no more delegation shares.
 * remove the validator if it is unbonded and there are no more delegation shares
-* get a unique `unbondingId` and map it to the `UnbondingDelegationEntry` in `UnbondingDelegationByUnbondingId` 
+* get a unique `unbondingId` and map it to the `UnbondingDelegationEntry` in `UnbondingDelegationByUnbondingId`
 * call the `AfterUnbondingInitiated(unbondingId)` hook
 * add the unbonding delegation to `UnbondingDelegationQueue` with the completion time set to `UnbondingTime`
 
-#### Cancel an `UnbondingDelegation` Entry 
+#### Cancel an `UnbondingDelegation` Entry
 
 When a `cancel unbond delegation` occurs both the `validator`, the `delegation` and an `UnbondingDelegationQueue` state will be updated.
 
 * if cancel unbonding delegation amount equals to the `UnbondingDelegation` entry `balance`, then the `UnbondingDelegation` entry deleted from `UnbondingDelegationQueue`.
-* if the `cancel unbonding delegation amount is less than the `UnbondingDelegation` entry balance, then the `UnbondingDelegation` entry will be updated with new balance in the `UnbondingDelegationQueue`. 
+* if the `cancel unbonding delegation amount is less than the `UnbondingDelegation` entry balance, then the `UnbondingDelegation` entry will be updated with new balance in the `UnbondingDelegationQueue`.
 * cancel `amount` is [Delegated](#delegations) back to  the original `validator`.
 
 #### Complete Unbonding
@@ -456,6 +508,15 @@ When a redelegations complete the following occurs:
 
 * remove the entry from the `Redelegation` object
 
+#### Consensus pubkey rotation
+
+When a `ConsPubkeyRotation` occurs the validator and the `ValidatorConsensusKeyRotationRecordQueueKey` are updated:
+
+* the old consensus pubkey address will be removed from state and new consensus pubkey address will be added in place.
+* transfers the voting power to the new consensus pubkey address.
+* and triggers the hooks to update the `signing-info` in the `slashing` module 
+* and triggers the hooks to add the deducted fee to the `community pool` funds
+
 ### Slashing
 
 #### Slash Validator
@@ -464,7 +525,7 @@ When a Validator is slashed, the following occurs:
 
 * The total `slashAmount` is calculated as the `slashFactor` (a chain parameter) \* `TokensFromConsensusPower`,
   the total number of tokens bonded to the validator at the time of the infraction.
-* Every unbonding delegation and pseudo-unbonding redelegation such that the infraction occured before the unbonding or
+* Every unbonding delegation and pseudo-unbonding redelegation such that the infraction occurred before the unbonding or
   redelegation began from the validator are slashed by the `slashFactor` percentage of the initialBalance.
 * Each amount slashed from redelegations and unbonding delegations is subtracted from the
   total slash amount.
@@ -472,7 +533,7 @@ When a Validator is slashed, the following occurs:
   `NonBondedPool` depending on the validator's status. This reduces the total supply of tokens.
 
 In the case of a slash due to any infraction that requires evidence to submitted (for example double-sign), the slash
-occurs at the block where the evidence is included, not at the block where the infraction occured.
+occurs at the block where the evidence is included, not at the block where the infraction occurred.
 Put otherwise, validators are not slashed retroactively, only when they are caught.
 
 #### Slash Unbonding Delegation
@@ -643,7 +704,7 @@ When this message is processed the following actions occur:
 
 ### MsgCancelUnbondingDelegation
 
-The `MsgCancelUnbondingDelegation` message allows delegators to cancel the `unbondingDelegation` entry and delegate back to a previous validator.
+The `MsgCancelUnbondingDelegation` message allows delegators to cancel the `unbondingDelegation` entry and delegate back to a previous validator. However, please note that this feature does not support canceling unbond delegations from jailed validators.
 
 ```protobuf reference
 https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/staking/v1beta1/tx.proto#L38-L42
@@ -658,10 +719,11 @@ This message is expected to fail if:
 * the `unbondingDelegation` entry is already processed.
 * the `cancel unbonding delegation` amount is greater than the `unbondingDelegation` entry balance.
 * the `cancel unbonding delegation` height doesn't exist in the `unbondingDelegationQueue` of the delegator.
+* the `unbondingDelegation` is from a jailed validator.
 
 When this message is processed the following actions occur:
 
-* if the `unbondingDelegation` Entry balance is zero 
+* if the `unbondingDelegation` Entry balance is zero
     * in this condition `unbondingDelegation` entry will be removed from `unbondingDelegationQueue`.
     * otherwise `unbondingDelegationQueue` will be updated with new `unbondingDelegation` entry balance and initial balance
 * the validator's `DelegatorShares` and the delegation's `Shares` are both increased by the message `Amount`.
@@ -714,6 +776,7 @@ When this message is processed the following actions occur:
 
 The `MsgUpdateParams` update the staking module parameters.
 The params are updated through a governance proposal where the signer is the gov module account address.
+When the `MinCommissionRate` is updated, all validators with a lower (max) commission rate than `MinCommissionRate` will be updated to `MinCommissionRate`.
 
 ```protobuf reference
 https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/staking/v1beta1/tx.proto#L182-L195
@@ -722,6 +785,24 @@ https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/staking/v1bet
 The message handling can fail if:
 
 * signer is not the authority defined in the staking keeper (usually the gov module account).
+
+### MsgRotateConsPubKey
+
+The `MsgRotateConsPubKey` updates the consensus pubkey of a validator
+with a new pubkey, the validator must pay rotation fees (default fee 1000000stake) to rotate the consensus pubkey.
+
+```protobuf reference
+https://github.com/cosmos/cosmos-sdk/blob/efa7636756ad0164ae5ef75f958ffec95a4201a4/proto/cosmos/staking/v1beta1/tx.proto#L213-L226
+```
+
+The message handling can fail if:
+
+* The new pubkey is not a `cryptotypes.PubKey`.
+* The new pubkey is already associated with another validator.
+* The new pubkey is already present in the cons pubkey rotation history.
+* The validator address is not in validators list.
+* The `max_cons_pubkey_rotations` limit reached within unbonding period.
+* The validator doesn't have enough balance to pay for the rotation.
 
 ## Begin-Block
 
@@ -791,11 +872,11 @@ validators that still have remaining delegations, the `validator.Status` is
 switched from `types.Unbonding` to
 `types.Unbonded`.
 
-Unbonding operations can be put on hold by external modules via the `PutUnbondingOnHold(unbondingId)` method. 
- As a result, an unbonding operation (e.g., an unbonding delegation) that is on hold, cannot complete 
- even if it reaches maturity. For an unbonding operation with `unbondingId` to eventually complete 
- (after it reaches maturity), every call to `PutUnbondingOnHold(unbondingId)` must be matched 
- by a call to `UnbondingCanComplete(unbondingId)`. 
+Unbonding operations can be put on hold by external modules via the `PutUnbondingOnHold(unbondingId)` method.
+ As a result, an unbonding operation (e.g., an unbonding delegation) that is on hold, cannot complete
+ even if it reaches maturity. For an unbonding operation with `unbondingId` to eventually complete
+ (after it reaches maturity), every call to `PutUnbondingOnHold(unbondingId)` must be matched
+ by a call to `UnbondingCanComplete(unbondingId)`.
 
 #### Unbonding Delegations
 
@@ -815,6 +896,14 @@ Complete the unbonding of all mature `Redelegation.Entries` within the
 * remove the mature entry from `Redelegation.Entries`
 * remove the `Redelegation` object from the store if there are no
   remaining entries.
+
+#### ConsPubKeyRotations
+
+After the completion of the unbonding period, matured rotations will be removed from the queues and indexes to unblock the validator for the next iterations.
+
+* remove the mature entry from state of `ValidatorConsensusKeyRotationRecordQueueKey`
+* remove the mature entry form state of 
+`ValidatorConsensusKeyRotationRecordIndexKey`
 
 ## Hooks
 
@@ -843,6 +932,8 @@ following hooks can registered with staking:
     * called when a delegation is removed
 * `AfterUnbondingInitiated(Context, UnbondingID)`
     * called when an unbonding operation (validator unbonding, unbonding delegation, redelegation) was initiated
+* `AfterConsensusPubKeyUpdate(ctx Context, oldpubkey, newpubkey types.PubKey, fee sdk.Coin)`
+    * called when a consensus pubkey rotation of a validator is initiated.
 
 
 ## Events
@@ -936,14 +1027,20 @@ The staking module emits the following events:
 
 The staking module contains the following parameters:
 
-| Key               | Type             | Example                |
-|-------------------|------------------|------------------------|
-| UnbondingTime     | string (time ns) | "259200000000000"      |
-| MaxValidators     | uint16           | 100                    |
-| KeyMaxEntries     | uint16           | 7                      |
-| HistoricalEntries | uint16           | 3                      |
-| BondDenom         | string           | "stake"                |
-| MinCommissionRate | string           | "0.000000000000000000" |
+| Key                    | Type             | Example                |
+|-------------------     |------------------|------------------------|
+| UnbondingTime          | string (time ns) | "259200000000000"      |
+| MaxValidators          | uint16           | 100                    |
+| KeyMaxEntries          | uint16           | 7                      |
+| HistoricalEntries      | uint16           | 3                      |
+| BondDenom              | string           | "stake"                |
+| MinCommissionRate      | string           | "0.000000000000000000" |
+| KeyRotationFee         | sdk.Coin         | "1000000stake"         |
+| MaxConsPubkeyRotations | int              | 1                      |
+
+:::warning
+Manually updating the `MinCommissionRate` parameter will not affect the commission rate of the existing validators. It will only affect the commission rate of the new validators. Update the parameter with `MsgUpdateParams` to affect the commission rate of the existing validators as well.
+:::
 
 ## Client
 
@@ -1631,7 +1728,7 @@ simd tx staking edit-validator [flags]
 Example:
 
 ```bash
-simd tx staking edit-validator --moniker "new_moniker_name" --website "new_webiste_url" --from mykey
+simd tx staking edit-validator --moniker "new_moniker_name" --website "new_website_url" --from mykey
 ```
 
 ##### redelegate
@@ -1666,7 +1763,7 @@ Example:
 simd tx staking unbond cosmosvaloper1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 100stake --from mykey
 ```
 
-##### cancel unbond 
+##### cancel unbond
 
 The command `cancel-unbond` allow users to cancel the unbonding delegation entry and delegate back to the original validator.
 
@@ -1682,6 +1779,21 @@ Example:
 simd tx staking cancel-unbond cosmosvaloper1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 100stake 123123 --from mykey
 ```
 
+##### rotate cons pubkey
+
+The command `rotate-cons-pubkey` allows validators to rotate the associated consensus pubkey to the new consensus pubkey.
+
+Usage:
+
+```bash
+simd tx staking rotate-cons-pubkey [validator-address] [new-pubkey] [flags]
+```
+
+Example:
+
+```bash
+simd tx staking rotate-cons-pubkey myvalidator {"@type":"/cosmos.crypto.ed25519.PubKey","key":"oWg2ISpLF405Jcm2vXV+2v4fnjodh6aafuIdeoW+rUw="}
+```
 
 ### gRPC
 

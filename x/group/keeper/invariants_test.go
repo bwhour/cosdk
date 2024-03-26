@@ -10,14 +10,15 @@ import (
 	"cosmossdk.io/store"
 	"cosmossdk.io/store/metrics"
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/group"
+	"cosmossdk.io/x/group/internal/orm"
+	"cosmossdk.io/x/group/keeper"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/group"
-	"github.com/cosmos/cosmos-sdk/x/group/internal/orm"
-	"github.com/cosmos/cosmos-sdk/x/group/keeper"
 )
 
 type invariantTestSuite struct {
@@ -131,16 +132,17 @@ func (s *invariantTestSuite) TestGroupTotalWeightInvariant() {
 		cacheCurCtx, _ := curCtx.CacheContext()
 		groupsInfo := spec.groupsInfo
 		groupMembers := spec.groupMembers
-
-		_, err := groupTable.Create(cacheCurCtx.KVStore(key), groupsInfo)
+		storeService := runtime.NewKVStoreService(key)
+		kvStore := storeService.OpenKVStore(cacheCurCtx)
+		_, err := groupTable.Create(kvStore, groupsInfo)
 		s.Require().NoError(err)
 
 		for i := 0; i < len(groupMembers); i++ {
-			err := groupMemberTable.Create(cacheCurCtx.KVStore(key), groupMembers[i])
+			err := groupMemberTable.Create(kvStore, groupMembers[i])
 			s.Require().NoError(err)
 		}
 
-		_, broken := keeper.GroupTotalWeightInvariantHelper(cacheCurCtx, key, *groupTable, groupMemberByGroupIndex)
+		_, broken := keeper.GroupTotalWeightInvariantHelper(cacheCurCtx, storeService, *groupTable, groupMemberByGroupIndex)
 		s.Require().Equal(spec.expBroken, broken)
 
 	}

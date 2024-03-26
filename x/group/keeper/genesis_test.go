@@ -11,20 +11,22 @@ import (
 
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
+	authtypes "cosmossdk.io/x/auth/types"
+	banktypes "cosmossdk.io/x/bank/types"
+	"cosmossdk.io/x/group"
+	"cosmossdk.io/x/group/keeper"
+	"cosmossdk.io/x/group/module"
+	grouptestutil "cosmossdk.io/x/group/testutil"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/cosmos-sdk/x/group"
-	"github.com/cosmos/cosmos-sdk/x/group/keeper"
-	"github.com/cosmos/cosmos-sdk/x/group/module"
-	grouptestutil "github.com/cosmos/cosmos-sdk/x/group/testutil"
 )
 
 type GenesisTestSuite struct {
@@ -49,8 +51,9 @@ var (
 
 func (s *GenesisTestSuite) SetupTest() {
 	key := storetypes.NewKVStoreKey(group.StoreKey)
+	storeService := runtime.NewKVStoreService(key)
 	testCtx := testutil.DefaultContextWithDB(s.T(), key, storetypes.NewTransientStoreKey("transient_test"))
-	encCfg := moduletestutil.MakeTestEncodingConfig(module.AppModuleBasic{})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, module.AppModule{})
 
 	ctrl := gomock.NewController(s.T())
 	accountKeeper := grouptestutil.NewMockAccountKeeper(ctrl)
@@ -71,7 +74,8 @@ func (s *GenesisTestSuite) SetupTest() {
 	s.cdc = codec.NewProtoCodec(encCfg.InterfaceRegistry)
 	s.ctx = s.sdkCtx
 
-	s.keeper = keeper.NewKeeper(key, s.cdc, bApp.MsgServiceRouter(), accountKeeper, group.DefaultConfig())
+	env := runtime.NewEnvironment(storeService, log.NewNopLogger(), runtime.EnvWithRouterService(bApp.GRPCQueryRouter(), bApp.MsgServiceRouter()))
+	s.keeper = keeper.NewKeeper(env, s.cdc, accountKeeper, group.DefaultConfig())
 }
 
 func (s *GenesisTestSuite) TestInitExportGenesis() {
@@ -141,7 +145,8 @@ func (s *GenesisTestSuite) TestInitExportGenesis() {
 		group.ModuleName: genesisBytes,
 	}
 
-	s.keeper.InitGenesis(sdkCtx, cdc, genesisData[group.ModuleName])
+	err = s.keeper.InitGenesis(sdkCtx, cdc, genesisData[group.ModuleName])
+	s.Require().NoError(err)
 
 	for i, g := range genesisState.Groups {
 		res, err := s.keeper.GroupInfo(ctx, &group.QueryGroupInfoRequest{
@@ -181,7 +186,8 @@ func (s *GenesisTestSuite) TestInitExportGenesis() {
 		s.Require().Equal(votesRes.Votes[0], genesisState.Votes[0])
 	}
 
-	exported := s.keeper.ExportGenesis(sdkCtx, cdc)
+	exported, err := s.keeper.ExportGenesis(sdkCtx, cdc)
+	s.Require().NoError(err)
 	bz, err := cdc.MarshalJSON(exported)
 	s.Require().NoError(err)
 

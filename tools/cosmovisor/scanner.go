@@ -67,6 +67,7 @@ func newUpgradeFileWatcher(cfg *Config, logger log.Logger) (*fileWatcher, error)
 
 func (fw *fileWatcher) Stop() {
 	close(fw.cancel)
+	fw.ticker.Stop()
 }
 
 // MonitorUpdate pools the filesystem to check for new upgrade currentInfo.
@@ -131,7 +132,7 @@ func (fw *fileWatcher) CheckUpdate(currentUpgrade upgradetypes.Plan) bool {
 		fw.currentInfo = info
 		fw.lastModTime = stat.ModTime()
 
-		// Heuristic: Deamon has restarted, so we don't know if we successfully
+		// Heuristic: Daemon has restarted, so we don't know if we successfully
 		// downloaded the upgrade or not. So we try to compare the running upgrade
 		// name (read from the cosmovisor file) with the upgrade info.
 		if !strings.EqualFold(currentUpgrade.Name, fw.currentInfo.Name) {
@@ -189,7 +190,7 @@ func parseUpgradeInfoFile(filename string, disableRecase bool) (upgradetypes.Pla
 	}
 
 	if len(f) == 0 {
-		return upgradetypes.Plan{}, errors.New("empty upgrade-info.json")
+		return upgradetypes.Plan{}, fmt.Errorf("empty upgrade-info.json in %q", filename)
 	}
 
 	var upgradePlan upgradetypes.Plan
@@ -207,5 +208,5 @@ func parseUpgradeInfoFile(filename string, disableRecase bool) (upgradetypes.Pla
 		upgradePlan.Name = strings.ToLower(upgradePlan.Name)
 	}
 
-	return upgradePlan, err
+	return upgradePlan, nil
 }

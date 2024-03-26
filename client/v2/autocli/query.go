@@ -1,22 +1,26 @@
 package autocli
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"time"
 
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
+	"cosmossdk.io/x/tx/signing/aminojson"
 	"github.com/cockroachdb/errors"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"cosmossdk.io/client/v2/internal/flags"
 	"cosmossdk.io/client/v2/internal/util"
 )
 
 // BuildQueryCommand builds the query commands for all the provided modules. If a custom command is provided for a
 // module, this is used instead of any automatically generated CLI commands. This allows apps to a fully dynamic client
 // with a more customized experience if a binary with custom commands is downloaded.
-func (b *Builder) BuildQueryCommand(appOptions AppOptions, customCmds map[string]*cobra.Command) (*cobra.Command, error) {
-	queryCmd := topLevelCmd("query", "Querying subcommands")
+func (b *Builder) BuildQueryCommand(ctx context.Context, appOptions AppOptions, customCmds map[string]*cobra.Command) (*cobra.Command, error) {
+	queryCmd := topLevelCmd(ctx, "query", "Querying subcommands")
 	queryCmd.Aliases = []string{"q"}
 
 	if err := b.enhanceCommandCommon(queryCmd, queryCmdType, appOptions, customCmds); err != nil {
@@ -33,7 +37,7 @@ func (b *Builder) AddQueryServiceCommands(cmd *cobra.Command, cmdDescriptor *aut
 	for cmdName, subCmdDesc := range cmdDescriptor.SubCommands {
 		subCmd := findSubCommand(cmd, cmdName)
 		if subCmd == nil {
-			subCmd = topLevelCmd(cmdName, fmt.Sprintf("Querying commands for the %s service", subCmdDesc.Service))
+			subCmd = topLevelCmd(cmd.Context(), cmdName, fmt.Sprintf("Querying commands for the %s service", subCmdDesc.Service))
 		}
 
 		if err := b.AddQueryServiceCommands(subCmd, subCmdDesc); err != nil {
@@ -77,7 +81,11 @@ func (b *Builder) AddQueryServiceCommands(cmd *cobra.Command, cmdDescriptor *aut
 			continue
 		}
 
-		methodCmd, err := b.BuildQueryMethodCommand(methodDescriptor, methodOpts)
+		if !util.IsSupportedVersion(util.DescriptorDocs(methodDescriptor)) {
+			continue
+		}
+
+		methodCmd, err := b.BuildQueryMethodCommand(cmd.Context(), methodDescriptor, methodOpts)
 		if err != nil {
 			return err
 		}
@@ -96,24 +104,20 @@ func (b *Builder) AddQueryServiceCommands(cmd *cobra.Command, cmdDescriptor *aut
 
 // BuildQueryMethodCommand creates a gRPC query command for the given service method. This can be used to auto-generate
 // just a single command for a single service rpc method.
-func (b *Builder) BuildQueryMethodCommand(descriptor protoreflect.MethodDescriptor, options *autocliv1.RpcCommandOptions) (*cobra.Command, error) {
+func (b *Builder) BuildQueryMethodCommand(ctx context.Context, descriptor protoreflect.MethodDescriptor, options *autocliv1.RpcCommandOptions) (*cobra.Command, error) {
 	getClientConn := b.GetClientConn
 	serviceDescriptor := descriptor.Parent().(protoreflect.ServiceDescriptor)
 	methodName := fmt.Sprintf("/%s/%s", serviceDescriptor.FullName(), descriptor.Name())
 	outputType := util.ResolveMessageType(b.TypeResolver, descriptor.Output())
-	jsonMarshalOptions := protojson.MarshalOptions{
+	encoderOptions := aminojson.EncoderOptions{
 		Indent:          "  ",
-		UseProtoNames:   true,
-		UseEnumNumbers:  false,
-		EmitUnpopulated: true,
-		Resolver:        b.TypeResolver,
+		EnumAsString:    true,
+		DoNotSortFields: true,
+		TypeResolver:    b.TypeResolver,
+		FileResolver:    b.FileResolver,
 	}
 
 	cmd, err := b.buildMethodCommandCommon(descriptor, options, func(cmd *cobra.Command, input protoreflect.Message) error {
-		if noIdent, _ := cmd.Flags().GetBool(flagNoIndent); noIdent {
-			jsonMarshalOptions.Indent = ""
-		}
-
 		clientConn, err := getClientConn(cmd)
 		if err != nil {
 			return err
@@ -124,7 +128,12 @@ func (b *Builder) BuildQueryMethodCommand(descriptor protoreflect.MethodDescript
 			return err
 		}
 
-		bz, err := jsonMarshalOptions.Marshal(output.Interface())
+		if noIndent, _ := cmd.Flags().GetBool(flags.FlagNoIndent); noIndent {
+			encoderOptions.Indent = ""
+		}
+
+		enc := encoder(aminojson.NewEncoder(encoderOptions))
+		bz, err := enc.Marshal(output.Interface())
 		if err != nil {
 			return fmt.Errorf("cannot marshal response %v: %w", output.Interface(), err)
 		}
@@ -138,8 +147,40 @@ func (b *Builder) BuildQueryMethodCommand(descriptor protoreflect.MethodDescript
 	if b.AddQueryConnFlags != nil {
 		b.AddQueryConnFlags(cmd)
 
-		cmd.Flags().BoolP(flagNoIndent, "", false, "Do not indent JSON output")
+		cmd.Flags().BoolP(flags.FlagNoIndent, "", false, "Do not indent JSON output")
+	}
+
+	// silence usage only for inner txs & queries commands
+	if cmd != nil {
+		cmd.SilenceUsage = true
 	}
 
 	return cmd, nil
+}
+
+func encoder(encoder aminojson.Encoder) aminojson.Encoder {
+	return encoder.DefineTypeEncoding("google.protobuf.Duration", func(_ *aminojson.Encoder, msg protoreflect.Message, w io.Writer) error {
+		var (
+			secondsName protoreflect.Name = "seconds"
+			nanosName   protoreflect.Name = "nanos"
+		)
+
+		fields := msg.Descriptor().Fields()
+		secondsField := fields.ByName(secondsName)
+		if secondsField == nil {
+			return fmt.Errorf("expected seconds field")
+		}
+
+		seconds := msg.Get(secondsField).Int()
+
+		nanosField := fields.ByName(nanosName)
+		if nanosField == nil {
+			return fmt.Errorf("expected nanos field")
+		}
+
+		nanos := msg.Get(nanosField).Int()
+
+		_, err := fmt.Fprintf(w, `"%s"`, (time.Duration(seconds)*time.Second + (time.Duration(nanos) * time.Nanosecond)).String())
+		return err
+	})
 }

@@ -14,7 +14,6 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/crypto/types/multisig"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 )
 
@@ -24,7 +23,7 @@ import (
 type LegacyMsg interface {
 	sdk.Msg
 
-	// Get the canonical byte representation of the Msg.
+	// GetSignBytes get the canonical byte representation of the Msg.
 	GetSignBytes() []byte
 }
 
@@ -41,7 +40,6 @@ type StdSignDoc struct {
 	Memo          string            `json:"memo" yaml:"memo"`
 	Fee           json.RawMessage   `json:"fee" yaml:"fee"`
 	Msgs          []json.RawMessage `json:"msgs" yaml:"msgs"`
-	Tip           *StdTip           `json:"tip,omitempty" yaml:"tip"`
 }
 
 var RegressionTestingAminoCodec *codec.LegacyAmino
@@ -62,7 +60,7 @@ func mustSortJSON(bz []byte) []byte {
 
 // StdSignBytes returns the bytes to sign for a transaction.
 // Deprecated: Please use x/tx/signing/aminojson instead.
-func StdSignBytes(chainID string, accnum, sequence, timeout uint64, fee StdFee, msgs []sdk.Msg, memo string, tip *tx.Tip) []byte {
+func StdSignBytes(chainID string, accnum, sequence, timeout uint64, fee StdFee, msgs []sdk.Msg, memo string) []byte {
 	if RegressionTestingAminoCodec == nil {
 		panic(fmt.Errorf("must set RegressionTestingAminoCodec before calling StdSignBytes"))
 	}
@@ -70,15 +68,6 @@ func StdSignBytes(chainID string, accnum, sequence, timeout uint64, fee StdFee, 
 	for _, msg := range msgs {
 		bz := RegressionTestingAminoCodec.MustMarshalJSON(msg)
 		msgsBytes = append(msgsBytes, mustSortJSON(bz))
-	}
-
-	var stdTip *StdTip
-	if tip != nil {
-		if tip.Tipper == "" {
-			panic(fmt.Errorf("tipper cannot be empty"))
-		}
-
-		stdTip = &StdTip{Amount: tip.Amount, Tipper: tip.Tipper}
 	}
 
 	bz, err := legacy.Cdc.MarshalJSON(StdSignDoc{
@@ -89,7 +78,6 @@ func StdSignBytes(chainID string, accnum, sequence, timeout uint64, fee StdFee, 
 		Msgs:          msgsBytes,
 		Sequence:      sequence,
 		TimeoutHeight: timeout,
-		Tip:           stdTip,
 	})
 	if err != nil {
 		panic(err)
@@ -104,7 +92,7 @@ type StdSignature struct {
 	Signature          []byte                          `json:"signature" yaml:"signature"`
 }
 
-// Deprecated
+// Deprecated: NewStdSignature returns a std signature
 func NewStdSignature(pk cryptotypes.PubKey, sig []byte) StdSignature {
 	return StdSignature{PubKey: pk, Signature: sig}
 }

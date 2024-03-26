@@ -3,29 +3,30 @@ package keeper_test
 import (
 	"encoding/binary"
 	"testing"
+	"time"
 
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
-	cmttime "github.com/cometbft/cometbft/types/time"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/suite"
 
 	st "cosmossdk.io/api/cosmos/staking/v1beta1"
+	"cosmossdk.io/core/header"
+	"cosmossdk.io/log"
 	sdkmath "cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	authtypes "cosmossdk.io/x/auth/types"
+	slashingkeeper "cosmossdk.io/x/slashing/keeper"
+	slashingtestutil "cosmossdk.io/x/slashing/testutil"
+	slashingtypes "cosmossdk.io/x/slashing/types"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdktestutil "github.com/cosmos/cosmos-sdk/testutil"
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	addresstypes "github.com/cosmos/cosmos-sdk/types/address"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
-	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
-	slashingtestutil "github.com/cosmos/cosmos-sdk/x/slashing/testutil"
-	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 )
 
 var consAddr = sdk.ConsAddress(sdk.AccAddress([]byte("addr1_______________")))
@@ -45,9 +46,10 @@ func (s *KeeperTestSuite) SetupTest() {
 	key := storetypes.NewKVStoreKey(slashingtypes.StoreKey)
 	s.key = key
 	storeService := runtime.NewKVStoreService(key)
+	env := runtime.NewEnvironment(storeService, log.NewNopLogger())
 	testCtx := sdktestutil.DefaultContextWithDB(s.T(), key, storetypes.NewTransientStoreKey("transient_test"))
-	ctx := testCtx.Ctx.WithBlockHeader(cmtproto.Header{Time: cmttime.Now()})
-	encCfg := moduletestutil.MakeTestEncodingConfig()
+	ctx := testCtx.Ctx.WithHeaderInfo(header.Info{Time: time.Now().Round(0).UTC()})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{})
 
 	// gomock initializations
 	ctrl := gomock.NewController(s.T())
@@ -55,16 +57,19 @@ func (s *KeeperTestSuite) SetupTest() {
 	s.stakingKeeper.EXPECT().ValidatorAddressCodec().Return(address.NewBech32Codec("cosmosvaloper")).AnyTimes()
 	s.stakingKeeper.EXPECT().ConsensusAddressCodec().Return(address.NewBech32Codec("cosmosvalcons")).AnyTimes()
 
+	authStr, err := address.NewBech32Codec("cosmos").BytesToString(authtypes.NewModuleAddress(slashingtypes.GovModuleName))
+	s.Require().NoError(err)
+
 	s.ctx = ctx
 	s.slashingKeeper = slashingkeeper.NewKeeper(
+		env,
 		encCfg.Codec,
 		encCfg.Amino,
-		storeService,
 		s.stakingKeeper,
-		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+		authStr,
 	)
 	// set test params
-	err := s.slashingKeeper.Params.Set(ctx, slashingtestutil.TestParams())
+	err = s.slashingKeeper.Params.Set(ctx, slashingtestutil.TestParams())
 	s.Require().NoError(err)
 	slashingtypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	queryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)

@@ -16,32 +16,31 @@ import (
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"cosmossdk.io/x/accounts"
+	"cosmossdk.io/x/auth"
+	"cosmossdk.io/x/auth/vesting"
+	authzmodule "cosmossdk.io/x/authz/module"
+	"cosmossdk.io/x/bank"
+	banktypes "cosmossdk.io/x/bank/types"
+	"cosmossdk.io/x/distribution"
 	"cosmossdk.io/x/evidence"
 	feegrantmodule "cosmossdk.io/x/feegrant/module"
+	"cosmossdk.io/x/gov"
+	group "cosmossdk.io/x/group/module"
+	"cosmossdk.io/x/mint"
+	"cosmossdk.io/x/protocolpool"
+	"cosmossdk.io/x/slashing"
+	"cosmossdk.io/x/staking"
 	"cosmossdk.io/x/upgrade"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
-	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil/mock"
 	"github.com/cosmos/cosmos-sdk/testutil/network"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/types/msgservice"
-	"github.com/cosmos/cosmos-sdk/x/auth"
-	"github.com/cosmos/cosmos-sdk/x/auth/vesting"
-	authzmodule "github.com/cosmos/cosmos-sdk/x/authz/module"
-	"github.com/cosmos/cosmos-sdk/x/bank"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/cosmos-sdk/x/crisis"
-	"github.com/cosmos/cosmos-sdk/x/distribution"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
-	"github.com/cosmos/cosmos-sdk/x/gov"
-	group "github.com/cosmos/cosmos-sdk/x/group/module"
-	"github.com/cosmos/cosmos-sdk/x/mint"
-	"github.com/cosmos/cosmos-sdk/x/params"
-	"github.com/cosmos/cosmos-sdk/x/slashing"
-	"github.com/cosmos/cosmos-sdk/x/staking"
 )
 
 func TestSimAppExportAndBlockedAddrs(t *testing.T) {
@@ -59,7 +58,7 @@ func TestSimAppExportAndBlockedAddrs(t *testing.T) {
 		if modAddr, err := sdk.AccAddressFromBech32(acc); err == nil {
 			addr = modAddr
 		} else {
-			addr = app.AccountKeeper.GetModuleAddress(acc)
+			addr = app.AuthKeeper.GetModuleAddress(acc)
 		}
 
 		require.True(
@@ -197,6 +196,7 @@ func TestRunMigrations(t *testing.T) {
 			_, err = app.ModuleManager.RunMigrations(
 				app.NewContextLegacy(true, cmtproto.Header{Height: app.LastBlockHeight()}), configurator,
 				module.VersionMap{
+					"accounts":     accounts.AppModule{}.ConsensusVersion(),
 					"bank":         1,
 					"auth":         auth.AppModule{}.ConsensusVersion(),
 					"authz":        authzmodule.AppModule{}.ConsensusVersion(),
@@ -206,13 +206,12 @@ func TestRunMigrations(t *testing.T) {
 					"slashing":     slashing.AppModule{}.ConsensusVersion(),
 					"gov":          gov.AppModule{}.ConsensusVersion(),
 					"group":        group.AppModule{}.ConsensusVersion(),
-					"params":       params.AppModule{}.ConsensusVersion(),
 					"upgrade":      upgrade.AppModule{}.ConsensusVersion(),
 					"vesting":      vesting.AppModule{}.ConsensusVersion(),
 					"feegrant":     feegrantmodule.AppModule{}.ConsensusVersion(),
 					"evidence":     evidence.AppModule{}.ConsensusVersion(),
-					"crisis":       crisis.AppModule{}.ConsensusVersion(),
 					"genutil":      genutil.AppModule{}.ConsensusVersion(),
+					"protocolpool": protocolpool.AppModule{}.ConsensusVersion(),
 				},
 			)
 			if tc.expRunErr {
@@ -237,8 +236,8 @@ func TestInitGenesisOnMigration(t *testing.T) {
 	t.Cleanup(mockCtrl.Finish)
 	mockModule := mock.NewMockAppModuleWithAllExtensions(mockCtrl)
 	mockDefaultGenesis := json.RawMessage(`{"key": "value"}`)
-	mockModule.EXPECT().DefaultGenesis(gomock.Eq(app.appCodec)).Times(1).Return(mockDefaultGenesis)
-	mockModule.EXPECT().InitGenesis(gomock.Eq(ctx), gomock.Eq(app.appCodec), gomock.Eq(mockDefaultGenesis)).Times(1)
+	mockModule.EXPECT().DefaultGenesis().Times(1).Return(mockDefaultGenesis)
+	mockModule.EXPECT().InitGenesis(gomock.Eq(ctx), gomock.Eq(mockDefaultGenesis)).Times(1)
 	mockModule.EXPECT().ConsensusVersion().Times(1).Return(uint64(0))
 
 	app.ModuleManager.Modules["mock"] = mockModule
@@ -255,12 +254,10 @@ func TestInitGenesisOnMigration(t *testing.T) {
 			"distribution": distribution.AppModule{}.ConsensusVersion(),
 			"slashing":     slashing.AppModule{}.ConsensusVersion(),
 			"gov":          gov.AppModule{}.ConsensusVersion(),
-			"params":       params.AppModule{}.ConsensusVersion(),
 			"upgrade":      upgrade.AppModule{}.ConsensusVersion(),
 			"vesting":      vesting.AppModule{}.ConsensusVersion(),
 			"feegrant":     feegrantmodule.AppModule{}.ConsensusVersion(),
 			"evidence":     evidence.AppModule{}.ConsensusVersion(),
-			"crisis":       crisis.AppModule{}.ConsensusVersion(),
 			"genutil":      genutil.AppModule{}.ConsensusVersion(),
 		},
 	)
@@ -280,7 +277,7 @@ func TestUpgradeStateOnGenesis(t *testing.T) {
 	vm, err := app.UpgradeKeeper.GetModuleVersionMap(ctx)
 	require.NoError(t, err)
 	for v, i := range app.ModuleManager.Modules {
-		if i, ok := i.(module.HasConsensusVersion); ok {
+		if i, ok := i.(appmodule.HasConsensusVersion); ok {
 			require.Equal(t, vm[v], i.ConsensusVersion())
 		}
 	}
@@ -315,8 +312,8 @@ func (c customAddressCodec) BytesToString(bz []byte) (string, error) {
 
 func TestAddressCodecFactory(t *testing.T) {
 	var addrCodec address.Codec
-	var valAddressCodec runtime.ValidatorAddressCodec
-	var consAddressCodec runtime.ConsensusAddressCodec
+	var valAddressCodec address.ValidatorAddressCodec
+	var consAddressCodec address.ConsensusAddressCodec
 
 	err := depinject.Inject(
 		depinject.Configs(
@@ -342,8 +339,8 @@ func TestAddressCodecFactory(t *testing.T) {
 			depinject.Supply(
 				log.NewNopLogger(),
 				func() address.Codec { return customAddressCodec{} },
-				func() runtime.ValidatorAddressCodec { return customAddressCodec{} },
-				func() runtime.ConsensusAddressCodec { return customAddressCodec{} },
+				func() address.ValidatorAddressCodec { return customAddressCodec{} },
+				func() address.ConsensusAddressCodec { return customAddressCodec{} },
 			),
 		),
 		&addrCodec, &valAddressCodec, &consAddressCodec)

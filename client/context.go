@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"strings"
 
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/spf13/viper"
@@ -27,23 +29,28 @@ type PreprocessTxFn func(chainID string, key keyring.KeyType, tx TxBuilder) erro
 // Context implements a typical context created in SDK modules for transaction
 // handling and queries.
 type Context struct {
+	Client                CometRPC
+	GRPCClient            *grpc.ClientConn
+	ChainID               string
+	Codec                 codec.Codec
+	InterfaceRegistry     codectypes.InterfaceRegistry
+	Input                 io.Reader
+	Keyring               keyring.Keyring
+	KeyringOptions        []keyring.Option
+	KeyringDir            string
+	KeyringDefaultKeyName string
+	Output                io.Writer
+	OutputFormat          string
+	Height                int64
+	HomeDir               string
+	// From is a name or an address of a keyring account used to set FromName and FromAddress fields.
+	// Should be set by the "from" flag.
+	From string
+	// Name of a keyring account used to sign transactions.
+	FromName string
+	// Address of a keyring account used to sign transactions.
 	FromAddress       sdk.AccAddress
-	Client            CometRPC
-	GRPCClient        *grpc.ClientConn
-	ChainID           string
-	Codec             codec.Codec
-	InterfaceRegistry codectypes.InterfaceRegistry
-	Input             io.Reader
-	Keyring           keyring.Keyring
-	KeyringOptions    []keyring.Option
-	Output            io.Writer
-	OutputFormat      string
-	Height            int64
-	HomeDir           string
-	KeyringDir        string
-	From              string
 	BroadcastMode     string
-	FromName          string
 	SignModeStr       string
 	UseLedger         bool
 	Simulate          bool
@@ -72,6 +79,10 @@ type Context struct {
 	AddressCodec          address.Codec
 	ValidatorAddressCodec address.Codec
 	ConsensusAddressCodec address.Codec
+
+	// Bech32 address prefixes.
+	AddressPrefix   string
+	ValidatorPrefix string
 }
 
 // WithCmdContext returns a copy of the context with an updated context.Context,
@@ -185,6 +196,12 @@ func (ctx Context) WithKeyringDir(dir string) Context {
 	return ctx
 }
 
+// WithKeyringDefaultKeyName returns a copy of the Context with KeyringDefaultKeyName set.
+func (ctx Context) WithKeyringDefaultKeyName(keyName string) Context {
+	ctx.KeyringDefaultKeyName = keyName
+	return ctx
+}
+
 // WithGenerateOnly returns a copy of the context with updated GenerateOnly value
 func (ctx Context) WithGenerateOnly(generateOnly bool) Context {
 	ctx.GenerateOnly = generateOnly
@@ -273,7 +290,14 @@ func (ctx Context) WithInterfaceRegistry(interfaceRegistry codectypes.InterfaceR
 // client-side config from the config file.
 func (ctx Context) WithViper(prefix string) Context {
 	v := viper.New()
+
+	if prefix == "" {
+		executableName, _ := os.Executable()
+		prefix = path.Base(executableName)
+	}
+
 	v.SetEnvPrefix(prefix)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 	ctx.Viper = v
 	return ctx
@@ -285,7 +309,7 @@ func (ctx Context) WithAux(isAux bool) Context {
 	return ctx
 }
 
-// WithLedgerHasProto returns the context with the provided boolean value, indicating
+// WithLedgerHasProtobuf returns the context with the provided boolean value, indicating
 // whether the target Ledger application can support Protobuf payloads.
 func (ctx Context) WithLedgerHasProtobuf(val bool) Context {
 	ctx.LedgerHasProtobuf = val
@@ -314,6 +338,18 @@ func (ctx Context) WithValidatorAddressCodec(validatorAddressCodec address.Codec
 // WithConsensusAddressCodec returns the context with the provided consensus address codec.
 func (ctx Context) WithConsensusAddressCodec(consensusAddressCodec address.Codec) Context {
 	ctx.ConsensusAddressCodec = consensusAddressCodec
+	return ctx
+}
+
+// WithAddressPrefix returns the context with the provided address bech32 prefix.
+func (ctx Context) WithAddressPrefix(addressPrefix string) Context {
+	ctx.AddressPrefix = addressPrefix
+	return ctx
+}
+
+// WithValidatorPrefix returns the context with the provided validator bech32 prefix.
+func (ctx Context) WithValidatorPrefix(validatorPrefix string) Context {
+	ctx.ValidatorPrefix = validatorPrefix
 	return ctx
 }
 
@@ -385,7 +421,13 @@ func (ctx Context) printOutput(out []byte) error {
 // GetFromFields returns a from account address, account name and keyring type, given either an address or key name.
 // If clientCtx.Simulate is true the keystore is not accessed and a valid address must be provided
 // If clientCtx.GenerateOnly is true the keystore is only accessed if a key name is provided
+// If from is empty, the default key if specified in the context will be used
 func GetFromFields(clientCtx Context, kr keyring.Keyring, from string) (sdk.AccAddress, string, keyring.KeyType, error) {
+	if from == "" && clientCtx.KeyringDefaultKeyName != "" {
+		from = clientCtx.KeyringDefaultKeyName
+		_ = clientCtx.PrintString(fmt.Sprintf("No key name or address provided; using the default key: %s\n", clientCtx.KeyringDefaultKeyName))
+	}
+
 	if from == "" {
 		return nil, "", 0, nil
 	}

@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"cosmossdk.io/errors"
+	"cosmossdk.io/x/slashing/types"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/slashing/types"
 )
 
 // Unjail calls the staking Unjail function to unjail a validator if the
@@ -62,9 +62,7 @@ func (k Keeper) Unjail(ctx context.Context, validatorAddr sdk.ValAddress) error 
 			return types.ErrValidatorJailed
 		}
 
-		// cannot be unjailed until out of jail
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		if sdkCtx.BlockHeader().Time.Before(info.JailedUntil) {
+		if k.environment.HeaderService.GetHeaderInfo(ctx).Time.Before(info.JailedUntil) {
 			return types.ErrValidatorJailed
 		}
 	}

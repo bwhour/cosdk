@@ -10,15 +10,21 @@ import (
 	gogotypes "github.com/cosmos/gogoproto/types"
 
 	"cosmossdk.io/core/address"
+	"cosmossdk.io/core/event"
+	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
+	"cosmossdk.io/x/staking/types"
 
+	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/staking/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	"github.com/cosmos/cosmos-sdk/types/module"
 )
 
 // BlockValidatorUpdates calculates the ValidatorUpdates for the current block
 // Called in each EndBlock
-func (k Keeper) BlockValidatorUpdates(ctx context.Context) ([]abci.ValidatorUpdate, error) {
+func (k Keeper) BlockValidatorUpdates(ctx context.Context) ([]module.ValidatorUpdate, error) {
 	// Calculate validator set changes.
 	//
 	// NOTE: ApplyAndReturnValidatorSetUpdates has to come before
@@ -39,9 +45,9 @@ func (k Keeper) BlockValidatorUpdates(ctx context.Context) ([]abci.ValidatorUpda
 		return nil, err
 	}
 
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	time := k.environment.HeaderService.GetHeaderInfo(ctx).Time
 	// Remove all mature unbonding delegations from the ubd queue.
-	matureUnbonds, err := k.DequeueAllMatureUBDQueue(ctx, sdkCtx.BlockHeader().Time)
+	matureUnbonds, err := k.DequeueAllMatureUBDQueue(ctx, time)
 	if err != nil {
 		return nil, err
 	}
@@ -61,18 +67,18 @@ func (k Keeper) BlockValidatorUpdates(ctx context.Context) ([]abci.ValidatorUpda
 			continue
 		}
 
-		sdkCtx.EventManager().EmitEvent(
-			sdk.NewEvent(
-				types.EventTypeCompleteUnbonding,
-				sdk.NewAttribute(sdk.AttributeKeyAmount, balances.String()),
-				sdk.NewAttribute(types.AttributeKeyValidator, dvPair.ValidatorAddress),
-				sdk.NewAttribute(types.AttributeKeyDelegator, dvPair.DelegatorAddress),
-			),
-		)
+		if err := k.environment.EventService.EventManager(ctx).EmitKV(
+			types.EventTypeCompleteUnbonding,
+			event.NewAttribute(sdk.AttributeKeyAmount, balances.String()),
+			event.NewAttribute(types.AttributeKeyValidator, dvPair.ValidatorAddress),
+			event.NewAttribute(types.AttributeKeyDelegator, dvPair.DelegatorAddress),
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	// Remove all mature redelegations from the red queue.
-	matureRedelegations, err := k.DequeueAllMatureRedelegationQueue(ctx, sdkCtx.BlockHeader().Time)
+	matureRedelegations, err := k.DequeueAllMatureRedelegationQueue(ctx, time)
 	if err != nil {
 		return nil, err
 	}
@@ -101,15 +107,20 @@ func (k Keeper) BlockValidatorUpdates(ctx context.Context) ([]abci.ValidatorUpda
 			continue
 		}
 
-		sdkCtx.EventManager().EmitEvent(
-			sdk.NewEvent(
-				types.EventTypeCompleteRedelegation,
-				sdk.NewAttribute(sdk.AttributeKeyAmount, balances.String()),
-				sdk.NewAttribute(types.AttributeKeyDelegator, dvvTriplet.DelegatorAddress),
-				sdk.NewAttribute(types.AttributeKeySrcValidator, dvvTriplet.ValidatorSrcAddress),
-				sdk.NewAttribute(types.AttributeKeyDstValidator, dvvTriplet.ValidatorDstAddress),
-			),
-		)
+		if err := k.environment.EventService.EventManager(ctx).EmitKV(
+			types.EventTypeCompleteRedelegation,
+			event.NewAttribute(sdk.AttributeKeyAmount, balances.String()),
+			event.NewAttribute(types.AttributeKeyDelegator, dvvTriplet.DelegatorAddress),
+			event.NewAttribute(types.AttributeKeySrcValidator, dvvTriplet.ValidatorSrcAddress),
+			event.NewAttribute(types.AttributeKeyDstValidator, dvvTriplet.ValidatorDstAddress),
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	err = k.PurgeAllMaturedConsKeyRotatedKeys(ctx, time)
+	if err != nil {
+		return nil, err
 	}
 
 	return validatorUpdates, nil
@@ -127,8 +138,8 @@ func (k Keeper) BlockValidatorUpdates(ctx context.Context) ([]abci.ValidatorUpda
 // CONTRACT: Only validators with non-zero power or zero-power that were bonded
 // at the previous block height or were removed from the validator set entirely
 // are returned to CometBFT.
-func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) (updates []abci.ValidatorUpdate, err error) {
-	params, err := k.GetParams(ctx)
+func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) ([]module.ValidatorUpdate, error) {
+	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -152,14 +163,19 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) (updates 
 	}
 	defer iterator.Close()
 
+	var updates []abci.ValidatorUpdate
+	var moduleValidatorUpdates []module.ValidatorUpdate
 	for count := 0; iterator.Valid() && count < int(maxValidators); iterator.Next() {
 		// everything that is iterated in this loop is becoming or already a
 		// part of the bonded validator set
 		valAddr := sdk.ValAddress(iterator.Value())
-		validator := k.mustGetValidator(ctx, valAddr)
+		validator, err := k.GetValidator(ctx, valAddr)
+		if err != nil {
+			return nil, fmt.Errorf("validator record not found for address: %X", valAddr)
+		}
 
 		if validator.Jailed {
-			panic("should never retrieve a jailed validator from the power store")
+			return nil, fmt.Errorf("should never retrieve a jailed validator from the power store")
 		}
 
 		// if we get to a zero-power validator (which we don't bond),
@@ -185,7 +201,7 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) (updates 
 		case validator.IsBonded():
 			// no state change
 		default:
-			panic("unexpected validator status")
+			return nil, fmt.Errorf("unexpected validator status")
 		}
 
 		// fetch the old power bytes
@@ -200,7 +216,7 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) (updates 
 		// update the validator set if power has changed
 		if !found || !bytes.Equal(oldPowerBytes, newPowerBytes) {
 			updates = append(updates, validator.ABCIValidatorUpdate(powerReduction))
-
+			moduleValidatorUpdates = append(moduleValidatorUpdates, validator.ModuleValidatorUpdate(powerReduction))
 			if err = k.SetLastValidatorPower(ctx, valAddr, newPower); err != nil {
 				return nil, err
 			}
@@ -218,7 +234,10 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) (updates 
 	}
 
 	for _, valAddrBytes := range noLongerBonded {
-		validator := k.mustGetValidator(ctx, sdk.ValAddress(valAddrBytes))
+		validator, err := k.GetValidator(ctx, sdk.ValAddress(valAddrBytes))
+		if err != nil {
+			return nil, fmt.Errorf("validator record not found for address: %X", sdk.ValAddress(valAddrBytes))
+		}
 		validator, err = k.bondedToUnbonding(ctx, validator)
 		if err != nil {
 			return nil, err
@@ -233,6 +252,76 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) (updates 
 		}
 
 		updates = append(updates, validator.ABCIValidatorUpdateZero())
+		moduleValidatorUpdates = append(moduleValidatorUpdates, validator.ModuleValidatorUpdateZero())
+	}
+
+	// ApplyAndReturnValidatorSetUpdates checks if there is ConsPubKeyRotationHistory
+	// with ConsPubKeyRotationHistory.RotatedHeight == ctx.BlockHeight() and if so, generates 2 ValidatorUpdate,
+	// one for a remove validator and one for create new validator
+	historyObjects, err := k.GetBlockConsPubKeyRotationHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, history := range historyObjects {
+		valAddr := history.OperatorAddress
+		if err != nil {
+			return nil, err
+		}
+
+		validator, err := k.GetValidator(ctx, valAddr)
+		if err != nil {
+			return nil, err
+		}
+
+		oldPk, ok := history.OldConsPubkey.GetCachedValue().(cryptotypes.PubKey)
+		if !ok {
+			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidType, "Expecting cryptotypes.PubKey, got %T", oldPk)
+		}
+		oldCmtPk, err := cryptocodec.ToCmtProtoPublicKey(oldPk)
+		if err != nil {
+			return nil, err
+		}
+
+		newPk, ok := history.NewConsPubkey.GetCachedValue().(cryptotypes.PubKey)
+		if !ok {
+			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidType, "Expecting cryptotypes.PubKey, got %T", newPk)
+		}
+		newCmtPk, err := cryptocodec.ToCmtProtoPublicKey(newPk)
+		if err != nil {
+			return nil, err
+		}
+
+		// a validator cannot rotate keys if it's not bonded or if it's jailed
+		// - a validator can be unbonding state but jailed status false
+		// - a validator can be jailed and status can be unbonding
+		if !(validator.Jailed || validator.Status != types.Bonded) {
+			updates = append(updates, abci.ValidatorUpdate{
+				PubKey: oldCmtPk,
+				Power:  0,
+			})
+
+			moduleValidatorUpdates = append(moduleValidatorUpdates, module.ValidatorUpdate{
+				PubKey:     oldPk.Bytes(),
+				PubKeyType: oldPk.Type(),
+				Power:      0,
+			})
+
+			updates = append(updates, abci.ValidatorUpdate{
+				PubKey: newCmtPk,
+				Power:  validator.ConsensusPower(powerReduction),
+			})
+
+			moduleValidatorUpdates = append(moduleValidatorUpdates, module.ValidatorUpdate{
+				PubKey:     newPk.Bytes(),
+				PubKeyType: newPk.Type(),
+				Power:      validator.ConsensusPower(powerReduction),
+			})
+
+			if err := k.updateToNewPubkey(ctx, validator, history.OldConsPubkey, history.NewConsPubkey, history.Fee); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Update the pools based on the recent updates in the validator set:
@@ -267,14 +356,14 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx context.Context) (updates 
 		return nil, err
 	}
 
-	return updates, err
+	return moduleValidatorUpdates, err
 }
 
 // Validator state transitions
 
 func (k Keeper) bondedToUnbonding(ctx context.Context, validator types.Validator) (types.Validator, error) {
 	if !validator.IsBonded() {
-		panic(fmt.Sprintf("bad state transition bondedToUnbonding, validator: %v\n", validator))
+		return types.Validator{}, fmt.Errorf("bad state transition bondedToUnbonding, validator: %v", validator)
 	}
 
 	return k.BeginUnbondingValidator(ctx, validator)
@@ -282,7 +371,7 @@ func (k Keeper) bondedToUnbonding(ctx context.Context, validator types.Validator
 
 func (k Keeper) unbondingToBonded(ctx context.Context, validator types.Validator) (types.Validator, error) {
 	if !validator.IsUnbonding() {
-		panic(fmt.Sprintf("bad state transition unbondingToBonded, validator: %v\n", validator))
+		return types.Validator{}, fmt.Errorf("bad state transition unbondingToBonded, validator: %v", validator)
 	}
 
 	return k.bondValidator(ctx, validator)
@@ -290,7 +379,7 @@ func (k Keeper) unbondingToBonded(ctx context.Context, validator types.Validator
 
 func (k Keeper) unbondedToBonded(ctx context.Context, validator types.Validator) (types.Validator, error) {
 	if !validator.IsUnbonded() {
-		panic(fmt.Sprintf("bad state transition unbondedToBonded, validator: %v\n", validator))
+		return types.Validator{}, fmt.Errorf("bad state transition unbondedToBonded, validator: %v", validator)
 	}
 
 	return k.bondValidator(ctx, validator)
@@ -376,7 +465,7 @@ func (k Keeper) bondValidator(ctx context.Context, validator types.Validator) (t
 
 // BeginUnbondingValidator performs all the store operations for when a validator begins unbonding
 func (k Keeper) BeginUnbondingValidator(ctx context.Context, validator types.Validator) (types.Validator, error) {
-	params, err := k.GetParams(ctx)
+	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return validator, err
 	}
@@ -388,7 +477,7 @@ func (k Keeper) BeginUnbondingValidator(ctx context.Context, validator types.Val
 
 	// sanity check
 	if validator.Status != types.Bonded {
-		panic(fmt.Sprintf("should not already be unbonded or unbonding, validator: %v\n", validator))
+		return validator, fmt.Errorf("should not already be unbonded or unbonding, validator: %v", validator)
 	}
 
 	id, err := k.IncrementUnbondingID(ctx)
@@ -398,10 +487,10 @@ func (k Keeper) BeginUnbondingValidator(ctx context.Context, validator types.Val
 
 	validator = validator.UpdateStatus(types.Unbonding)
 
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	headerInfo := k.environment.HeaderService.GetHeaderInfo(ctx)
 	// set the unbonding completion time and completion height appropriately
-	validator.UnbondingTime = sdkCtx.BlockHeader().Time.Add(params.UnbondingTime)
-	validator.UnbondingHeight = sdkCtx.BlockHeader().Height
+	validator.UnbondingTime = headerInfo.Time.Add(params.UnbondingTime)
+	validator.UnbondingHeight = headerInfo.Height
 
 	validator.UnbondingIds = append(validator.UnbondingIds, id)
 
@@ -463,13 +552,15 @@ type validatorsByAddr map[string][]byte
 func (k Keeper) getLastValidatorsByAddr(ctx context.Context) (validatorsByAddr, error) {
 	last := make(validatorsByAddr)
 
-	err := k.LastValidatorPower.Walk(ctx, nil, func(key, value []byte) (bool, error) {
+	err := k.LastValidatorPower.Walk(ctx, nil, func(key []byte, value gogotypes.Int64Value) (bool, error) {
 		valAddrStr, err := k.validatorAddressCodec.BytesToString(key)
 		if err != nil {
 			return true, err
 		}
 
-		last[valAddrStr] = value
+		intV := value.GetValue()
+		bz := k.cdc.MustMarshal(&gogotypes.Int64Value{Value: intV})
+		last[valAddrStr] = bz
 		return false, nil
 	})
 	if err != nil {

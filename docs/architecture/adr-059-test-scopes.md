@@ -56,7 +56,7 @@ Tests which exercise a whole module's function with dependencies mocked, are *jo
 These are almost like integration tests in that they exercise many things together but still
 use mocks.
 
-Example 1 journey vs illustrative tests - [depinject's BDD style tests](https://github.com/cosmos/cosmos-sdk/blob/main/depinject/features/bindings.feature), show how we can
+Example 1 journey vs illustrative tests - depinject's BDD style tests, show how we can
 rapidly build up many illustrative cases demonstrating behavioral rules without [very much code](https://github.com/cosmos/cosmos-sdk/blob/main/depinject/binding_test.go) while maintaining high level readability.
 
 Example 2 [depinject table driven tests](https://github.com/cosmos/cosmos-sdk/blob/main/depinject/provider_desc_test.go)
@@ -98,7 +98,7 @@ exercises [HandleEquivocationEvidence](https://github.com/cosmos/cosmos-sdk/blob
 keeper.
 
 Example 3 - Integration suite app configurations may also be specified via golang (not
-YAML as above) [statically](https://github.com/cosmos/cosmos-sdk/blob/main/x/nft/testutil/app_config.go) or [dynamically](https://github.com/cosmos/cosmos-sdk/blob/8c23f6f957d1c0bedd314806d1ac65bea59b084c/tests/integration/bank/keeper/keeper_test.go#L129-L134).
+YAML as above) [statically](https://github.com/cosmos/cosmos-sdk/blob/release/v0.47.x/x/nft/testutil/app_config.go) or [dynamically](https://github.com/cosmos/cosmos-sdk/blob/8c23f6f957d1c0bedd314806d1ac65bea59b084c/tests/integration/bank/keeper/keeper_test.go#L129-L134).
 
 #### Limitations
 
@@ -136,9 +136,9 @@ managing their life cycle.
 
 #### Limitations
 
-* [A success](https://github.com/cosmos/cosmos-sdk/runs/7606931983?check_suite_focus=true) may take a long time to run, 7-10 minutes per simulation in CI.
-* [Timeouts](https://github.com/cosmos/cosmos-sdk/runs/7606932295?check_suite_focus=true) sometimes occur on apparent successes without any indication why.
-* Useful error messages not provided on [failure](https://github.com/cosmos/cosmos-sdk/runs/7606932548?check_suite_focus=true) from CI, requiring a developer to run
+* May take a long time to run, 7-10 minutes per simulation in CI.
+* Timeouts sometimes occur on apparent successes without any indication why.
+* Useful error messages not provided on from CI, requiring a developer to run
   the simulation locally to reproduce.
 
 ### E2E tests
@@ -148,7 +148,7 @@ to a production environment as is practical. Presently these tests are located a
 [tests/e2e](https://github.com/cosmos/cosmos-sdk/tree/main/tests/e2e) and rely on [testutil/network](https://github.com/cosmos/cosmos-sdk/tree/main/testutil/network) to start up an in-process Tendermint node.
 
 An application should be built as minimally as possible to exercise the desired functionality.
-The SDK uses an application will only the required modules for the tests. The application developer is adviced to use its own application for e2e tests.
+The SDK uses an application will only the required modules for the tests. The application developer is advised to use its own application for e2e tests.
 
 #### Limitations
 

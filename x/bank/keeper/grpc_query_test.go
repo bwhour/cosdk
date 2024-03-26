@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	"cosmossdk.io/core/header"
+	authtypes "cosmossdk.io/x/auth/types"
+	vestingtypes "cosmossdk.io/x/auth/vesting/types"
+	"cosmossdk.io/x/bank/testutil"
+	"cosmossdk.io/x/bank/types"
+
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
-	"github.com/cosmos/cosmos-sdk/x/bank/testutil"
-	"github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
 func (suite *KeeperTestSuite) TestQueryBalance() {
@@ -173,7 +175,7 @@ func (suite *KeeperTestSuite) TestSpendableBalances() {
 	_, _, addr := testdata.KeyTestPubAddr()
 
 	ctx := sdk.UnwrapSDKContext(suite.ctx)
-	ctx = ctx.WithBlockTime(time.Now())
+	ctx = ctx.WithHeaderInfo(header.Info{Time: time.Now()})
 	queryClient := suite.mockQueryClient(ctx)
 
 	_, err := queryClient.SpendableBalances(ctx, &types.QuerySpendableBalancesRequest{})
@@ -200,8 +202,8 @@ func (suite *KeeperTestSuite) TestSpendableBalances() {
 	vacc, err := vestingtypes.NewContinuousVestingAccount(
 		acc,
 		sdk.NewCoins(fooCoins),
-		ctx.BlockTime().Unix(),
-		ctx.BlockTime().Add(time.Hour).Unix(),
+		ctx.HeaderInfo().Time.Unix(),
+		ctx.HeaderInfo().Time.Add(time.Hour).Unix(),
 	)
 	suite.Require().NoError(err)
 
@@ -209,7 +211,7 @@ func (suite *KeeperTestSuite) TestSpendableBalances() {
 	suite.Require().NoError(testutil.FundAccount(suite.ctx, suite.bankKeeper, addr, origCoins))
 
 	// move time forward for some tokens to vest
-	ctx = ctx.WithBlockTime(ctx.BlockTime().Add(30 * time.Minute))
+	ctx = ctx.WithHeaderInfo(header.Info{Time: ctx.HeaderInfo().Time.Add(30 * time.Minute)})
 	queryClient = suite.mockQueryClient(ctx)
 
 	suite.mockSpendableCoins(ctx, vacc)
@@ -226,13 +228,16 @@ func (suite *KeeperTestSuite) TestSpendableBalanceByDenom() {
 	_, _, addr := testdata.KeyTestPubAddr()
 
 	ctx := sdk.UnwrapSDKContext(suite.ctx)
-	ctx = ctx.WithBlockTime(time.Now())
+	ctx = ctx.WithHeaderInfo(header.Info{Time: time.Now()})
 	queryClient := suite.mockQueryClient(ctx)
 
 	_, err := queryClient.SpendableBalanceByDenom(ctx, &types.QuerySpendableBalanceByDenomRequest{})
 	suite.Require().Error(err)
 
-	req := types.NewQuerySpendableBalanceByDenomRequest(addr, fooDenom)
+	addrStr, err := suite.authKeeper.AddressCodec().BytesToString(addr)
+	suite.Require().NoError(err)
+
+	req := types.NewQuerySpendableBalanceByDenomRequest(addrStr, fooDenom)
 	acc := authtypes.NewBaseAccountWithAddress(addr)
 
 	suite.mockSpendableCoins(ctx, acc)
@@ -248,8 +253,8 @@ func (suite *KeeperTestSuite) TestSpendableBalanceByDenom() {
 	vacc, err := vestingtypes.NewContinuousVestingAccount(
 		acc,
 		sdk.NewCoins(fooCoins),
-		ctx.BlockTime().Unix(),
-		ctx.BlockTime().Add(time.Hour).Unix(),
+		ctx.HeaderInfo().Time.Unix(),
+		ctx.HeaderInfo().Time.Add(time.Hour).Unix(),
 	)
 	suite.Require().NoError(err)
 
@@ -257,7 +262,7 @@ func (suite *KeeperTestSuite) TestSpendableBalanceByDenom() {
 	suite.Require().NoError(testutil.FundAccount(suite.ctx, suite.bankKeeper, addr, origCoins))
 
 	// move time forward for half of the tokens to vest
-	ctx = ctx.WithBlockTime(ctx.BlockTime().Add(30 * time.Minute))
+	ctx = ctx.WithHeaderInfo(header.Info{Time: ctx.HeaderInfo().Time.Add(30 * time.Minute)})
 	queryClient = suite.mockQueryClient(ctx)
 
 	// check fooCoins first, it has some vested and some vesting
@@ -803,4 +808,112 @@ func (suite *KeeperTestSuite) TestQuerySendEnabled() {
 			suite.Require().Equal(tc.exp, resp)
 		})
 	}
+}
+
+func (suite *KeeperTestSuite) TestGRPCDenomOwnersByQuery() {
+	ctx := suite.ctx
+
+	keeper := suite.bankKeeper
+
+	suite.mockMintCoins(mintAcc)
+	suite.Require().NoError(keeper.MintCoins(ctx, types.MintModuleName, initCoins))
+	denom := "ibc/123123213123"
+	newCoins := sdk.NewCoins(sdk.NewCoin(denom, initTokens))
+	suite.mockMintCoins(mintAcc)
+	suite.Require().NoError(keeper.MintCoins(ctx, types.MintModuleName, newCoins))
+
+	for i := 0; i < 10; i++ {
+		addr := sdk.AccAddress(fmt.Sprintf("account-%d", i))
+
+		bal := sdk.NewCoins(sdk.NewCoin(
+			sdk.DefaultBondDenom,
+			sdk.TokensFromConsensusPower(initialPower/10, sdk.DefaultPowerReduction),
+		))
+		suite.mockSendCoinsFromModuleToAccount(mintAcc, addr)
+		suite.Require().NoError(keeper.SendCoinsFromModuleToAccount(ctx, types.MintModuleName, addr, bal))
+	}
+
+	testCases := map[string]struct {
+		req      *types.QueryDenomOwnersByQueryRequest
+		expPass  bool
+		numAddrs int
+		hasNext  bool
+		total    uint64
+	}{
+		"empty request": {
+			req:     &types.QueryDenomOwnersByQueryRequest{},
+			expPass: false,
+		},
+		"invalid denom": {
+			req: &types.QueryDenomOwnersByQueryRequest{
+				Denom: "foo",
+			},
+			expPass:  true,
+			numAddrs: 0,
+			hasNext:  false,
+			total:    0,
+		},
+		"valid request - page 1": {
+			req: &types.QueryDenomOwnersByQueryRequest{
+				Denom: sdk.DefaultBondDenom,
+				Pagination: &query.PageRequest{
+					Limit:      6,
+					CountTotal: true,
+				},
+			},
+			expPass:  true,
+			numAddrs: 6,
+			hasNext:  true,
+			total:    10,
+		},
+		"valid request - page 2": {
+			req: &types.QueryDenomOwnersByQueryRequest{
+				Denom: sdk.DefaultBondDenom,
+				Pagination: &query.PageRequest{
+					Offset:     6,
+					Limit:      10,
+					CountTotal: true,
+				},
+			},
+			expPass:  true,
+			numAddrs: 4,
+			hasNext:  false,
+			total:    10,
+		},
+		"valid request for query": {
+			req: &types.QueryDenomOwnersByQueryRequest{
+				Denom: denom,
+				Pagination: &query.PageRequest{
+					Limit:      6,
+					CountTotal: true,
+				},
+			},
+			expPass:  true,
+			numAddrs: 1,
+			hasNext:  false,
+			total:    1,
+		},
+	}
+
+	for name, tc := range testCases {
+		suite.Run(name, func() {
+			resp, err := suite.queryClient.DenomOwnersByQuery(gocontext.Background(), tc.req)
+			if tc.expPass {
+				suite.NoError(err)
+				suite.NotNil(resp)
+				suite.Len(resp.DenomOwners, tc.numAddrs)
+				suite.Equal(tc.total, resp.Pagination.Total)
+
+				if tc.hasNext {
+					suite.NotNil(resp.Pagination.NextKey)
+				} else {
+					suite.Nil(resp.Pagination.NextKey)
+				}
+			} else {
+				suite.Require().Error(err)
+			}
+		})
+	}
+
+	suite.Require().True(true)
 }

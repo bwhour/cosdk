@@ -4,39 +4,43 @@ import (
 	"testing"
 	"time"
 
-	abci "github.com/cometbft/cometbft/abci/types"
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/core/comet"
+	"cosmossdk.io/core/header"
+	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	authtypes "cosmossdk.io/x/auth/types"
+	"cosmossdk.io/x/distribution"
+	"cosmossdk.io/x/distribution/keeper"
+	distrtestutil "cosmossdk.io/x/distribution/testutil"
+	disttypes "cosmossdk.io/x/distribution/types"
+	stakingtypes "cosmossdk.io/x/staking/types"
 
 	"github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	"github.com/cosmos/cosmos-sdk/x/distribution"
-	"github.com/cosmos/cosmos-sdk/x/distribution/keeper"
-	distrtestutil "github.com/cosmos/cosmos-sdk/x/distribution/testutil"
-	disttypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 func TestAllocateTokensToValidatorWithCommission(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	key := storetypes.NewKVStoreKey(disttypes.StoreKey)
-	storeService := runtime.NewKVStoreService(key)
 	testCtx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("transient_test"))
-	encCfg := moduletestutil.MakeTestEncodingConfig(distribution.AppModuleBasic{})
-	ctx := testCtx.Ctx.WithBlockHeader(cmtproto.Header{Time: time.Now()})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, distribution.AppModule{})
+	ctx := testCtx.Ctx.WithHeaderInfo(header.Info{Time: time.Now()})
 
 	bankKeeper := distrtestutil.NewMockBankKeeper(ctrl)
 	stakingKeeper := distrtestutil.NewMockStakingKeeper(ctrl)
 	accountKeeper := distrtestutil.NewMockAccountKeeper(ctrl)
+	poolKeeper := distrtestutil.NewMockPoolKeeper(ctrl)
+
+	env := runtime.NewEnvironment(runtime.NewKVStoreService(key), log.NewNopLogger())
 
 	valCodec := address.NewBech32Codec("cosmosvaloper")
 
@@ -45,10 +49,11 @@ func TestAllocateTokensToValidatorWithCommission(t *testing.T) {
 
 	distrKeeper := keeper.NewKeeper(
 		encCfg.Codec,
-		storeService,
+		env,
 		accountKeeper,
 		bankKeeper,
 		stakingKeeper,
+		poolKeeper,
 		"fee_collector",
 		authtypes.NewModuleAddress("gov").String(),
 	)
@@ -86,26 +91,29 @@ func TestAllocateTokensToValidatorWithCommission(t *testing.T) {
 func TestAllocateTokensToManyValidators(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	key := storetypes.NewKVStoreKey(disttypes.StoreKey)
-	storeService := runtime.NewKVStoreService(key)
 	testCtx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("transient_test"))
-	encCfg := moduletestutil.MakeTestEncodingConfig(distribution.AppModuleBasic{})
-	ctx := testCtx.Ctx.WithBlockHeader(cmtproto.Header{Time: time.Now()})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, distribution.AppModule{})
+	ctx := testCtx.Ctx.WithHeaderInfo(header.Info{Time: time.Now()})
 
 	bankKeeper := distrtestutil.NewMockBankKeeper(ctrl)
 	stakingKeeper := distrtestutil.NewMockStakingKeeper(ctrl)
 	accountKeeper := distrtestutil.NewMockAccountKeeper(ctrl)
+	poolKeeper := distrtestutil.NewMockPoolKeeper(ctrl)
 
 	feeCollectorAcc := authtypes.NewEmptyModuleAccount("fee_collector")
 	accountKeeper.EXPECT().GetModuleAddress("distribution").Return(distrAcc.GetAddress())
 	accountKeeper.EXPECT().GetModuleAccount(gomock.Any(), "fee_collector").Return(feeCollectorAcc)
 	stakingKeeper.EXPECT().ValidatorAddressCodec().Return(address.NewBech32Codec("cosmosvaloper")).AnyTimes()
 
+	env := runtime.NewEnvironment(runtime.NewKVStoreService(key), log.NewNopLogger())
+
 	distrKeeper := keeper.NewKeeper(
 		encCfg.Codec,
-		storeService,
+		env,
 		accountKeeper,
 		bankKeeper,
 		stakingKeeper,
+		poolKeeper,
 		"fee_collector",
 		authtypes.NewModuleAddress("gov").String(),
 	)
@@ -128,11 +136,11 @@ func TestAllocateTokensToManyValidators(t *testing.T) {
 	val1.Commission = stakingtypes.NewCommission(math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0))
 	stakingKeeper.EXPECT().ValidatorByConsAddr(gomock.Any(), sdk.GetConsAddress(valConsPk1)).Return(val1, nil).AnyTimes()
 
-	abciValA := abci.Validator{
+	abciValA := comet.Validator{
 		Address: valConsPk0.Address(),
 		Power:   100,
 	}
-	abciValB := abci.Validator{
+	abciValB := comet.Validator{
 		Address: valConsPk1.Address(),
 		Power:   100,
 	}
@@ -146,7 +154,7 @@ func TestAllocateTokensToManyValidators(t *testing.T) {
 
 	feePool, err := distrKeeper.FeePool.Get(ctx)
 	require.NoError(t, err)
-	require.True(t, feePool.CommunityPool.IsZero())
+	require.True(t, feePool.DecimalPool.IsZero())
 
 	_, err = distrKeeper.ValidatorsAccumulatedCommission.Get(ctx, valAddr0)
 	require.ErrorIs(t, err, collections.ErrNotFound)
@@ -164,8 +172,10 @@ func TestAllocateTokensToManyValidators(t *testing.T) {
 	fees := sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, math.NewInt(100)))
 	bankKeeper.EXPECT().GetAllBalances(gomock.Any(), feeCollectorAcc.GetAddress()).Return(fees)
 	bankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "fee_collector", disttypes.ModuleName, fees)
+	bankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), disttypes.ModuleName, disttypes.ProtocolPoolModuleName, sdk.Coins{{Denom: sdk.DefaultBondDenom, Amount: math.NewInt(2)}}) // 2 community pool coins
+	poolKeeper.EXPECT().SetToDistribute(ctx, gomock.Any(), gomock.Any())
 
-	votes := []abci.VoteInfo{
+	votes := []comet.VoteInfo{
 		{
 			Validator: abciValA,
 		},
@@ -173,6 +183,7 @@ func TestAllocateTokensToManyValidators(t *testing.T) {
 			Validator: abciValB,
 		},
 	}
+
 	require.NoError(t, distrKeeper.AllocateTokens(ctx, 200, votes))
 
 	// 98 outstanding rewards (100 less 2 to community pool)
@@ -184,10 +195,9 @@ func TestAllocateTokensToManyValidators(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sdk.DecCoins{{Denom: sdk.DefaultBondDenom, Amount: math.LegacyNewDecWithPrec(490, 1)}}, val1OutstandingRewards.Rewards)
 
-	// 2 community pool coins
 	feePool, err = distrKeeper.FeePool.Get(ctx)
 	require.NoError(t, err)
-	require.Equal(t, sdk.DecCoins{{Denom: sdk.DefaultBondDenom, Amount: math.LegacyNewDec(2)}}, feePool.CommunityPool)
+	require.True(t, feePool.DecimalPool.IsZero())
 
 	// 50% commission for first proposer, (0.5 * 98%) * 100 / 2 = 23.25
 	val0Commission, err := distrKeeper.ValidatorsAccumulatedCommission.Get(ctx, valAddr0)
@@ -213,26 +223,29 @@ func TestAllocateTokensToManyValidators(t *testing.T) {
 func TestAllocateTokensTruncation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	key := storetypes.NewKVStoreKey(disttypes.StoreKey)
-	storeService := runtime.NewKVStoreService(key)
 	testCtx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("transient_test"))
-	encCfg := moduletestutil.MakeTestEncodingConfig(distribution.AppModuleBasic{})
-	ctx := testCtx.Ctx.WithBlockHeader(cmtproto.Header{Time: time.Now()})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, distribution.AppModule{})
+	ctx := testCtx.Ctx.WithHeaderInfo(header.Info{Time: time.Now()})
 
 	bankKeeper := distrtestutil.NewMockBankKeeper(ctrl)
 	stakingKeeper := distrtestutil.NewMockStakingKeeper(ctrl)
 	accountKeeper := distrtestutil.NewMockAccountKeeper(ctrl)
+	poolKeeper := distrtestutil.NewMockPoolKeeper(ctrl)
 
 	feeCollectorAcc := authtypes.NewEmptyModuleAccount("fee_collector")
 	accountKeeper.EXPECT().GetModuleAddress("distribution").Return(distrAcc.GetAddress())
 	accountKeeper.EXPECT().GetModuleAccount(gomock.Any(), "fee_collector").Return(feeCollectorAcc)
 	stakingKeeper.EXPECT().ValidatorAddressCodec().Return(address.NewBech32Codec("cosmosvaloper")).AnyTimes()
 
+	env := runtime.NewEnvironment(runtime.NewKVStoreService(key), log.NewNopLogger())
+
 	distrKeeper := keeper.NewKeeper(
 		encCfg.Codec,
-		storeService,
+		env,
 		accountKeeper,
 		bankKeeper,
 		stakingKeeper,
+		poolKeeper,
 		"fee_collector",
 		authtypes.NewModuleAddress("gov").String(),
 	)
@@ -262,15 +275,15 @@ func TestAllocateTokensTruncation(t *testing.T) {
 	val2.Commission = stakingtypes.NewCommission(math.LegacyNewDecWithPrec(1, 1), math.LegacyNewDecWithPrec(1, 1), math.LegacyNewDec(0))
 	stakingKeeper.EXPECT().ValidatorByConsAddr(gomock.Any(), sdk.GetConsAddress(valConsPk2)).Return(val2, nil).AnyTimes()
 
-	abciValA := abci.Validator{
+	abciValA := comet.Validator{
 		Address: valConsPk0.Address(),
 		Power:   11,
 	}
-	abciValB := abci.Validator{
+	abciValB := comet.Validator{
 		Address: valConsPk1.Address(),
 		Power:   10,
 	}
-	abciValC := abci.Validator{
+	abciValC := comet.Validator{
 		Address: valConsPk2.Address(),
 		Power:   10,
 	}
@@ -284,7 +297,7 @@ func TestAllocateTokensTruncation(t *testing.T) {
 
 	feePool, err := distrKeeper.FeePool.Get(ctx)
 	require.NoError(t, err)
-	require.True(t, feePool.CommunityPool.IsZero())
+	require.True(t, feePool.DecimalPool.IsZero())
 
 	_, err = distrKeeper.ValidatorsAccumulatedCommission.Get(ctx, valAddr0)
 	require.ErrorIs(t, err, collections.ErrNotFound)
@@ -302,8 +315,10 @@ func TestAllocateTokensTruncation(t *testing.T) {
 	fees := sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, math.NewInt(634195840)))
 	bankKeeper.EXPECT().GetAllBalances(gomock.Any(), feeCollectorAcc.GetAddress()).Return(fees)
 	bankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "fee_collector", disttypes.ModuleName, fees)
+	bankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), disttypes.ModuleName, disttypes.ProtocolPoolModuleName, gomock.Any()) // something is sent to community pool
+	poolKeeper.EXPECT().SetToDistribute(ctx, gomock.Any(), gomock.Any())
 
-	votes := []abci.VoteInfo{
+	votes := []comet.VoteInfo{
 		{
 			Validator: abciValA,
 		},
@@ -314,6 +329,7 @@ func TestAllocateTokensTruncation(t *testing.T) {
 			Validator: abciValC,
 		},
 	}
+
 	require.NoError(t, distrKeeper.AllocateTokens(ctx, 31, votes))
 
 	val0OutstandingRewards, err := distrKeeper.ValidatorOutstandingRewards.Get(ctx, valAddr0)

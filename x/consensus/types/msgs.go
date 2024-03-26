@@ -1,15 +1,17 @@
 package types
 
 import (
+	"errors"
+
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cmttypes "github.com/cometbft/cometbft/types"
-
-	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
-var _ sdk.Msg = &MsgUpdateParams{}
+func (msg MsgUpdateParams) ToProtoConsensusParams() (cmtproto.ConsensusParams, error) {
+	if msg.Evidence == nil || msg.Block == nil || msg.Validator == nil || msg.Abci == nil {
+		return cmtproto.ConsensusParams{}, errors.New("all parameters must be present")
+	}
 
-func (msg MsgUpdateParams) ToProtoConsensusParams() cmtproto.ConsensusParams {
 	cp := cmtproto.ConsensusParams{
 		Block: &cmtproto.BlockParams{
 			MaxBytes: msg.Block.MaxBytes,
@@ -32,5 +34,5 @@ func (msg MsgUpdateParams) ToProtoConsensusParams() cmtproto.ConsensusParams {
 		}
 	}
 
-	return cp
+	return cp, nil
 }

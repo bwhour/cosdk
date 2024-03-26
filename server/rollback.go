@@ -10,7 +10,7 @@ import (
 )
 
 // NewRollbackCmd creates a command to rollback CometBFT and multistore state by one height.
-func NewRollbackCmd(appCreator types.AppCreator) *cobra.Command {
+func NewRollbackCmd[T types.Application](appCreator types.AppCreator[T]) *cobra.Command {
 	var removeBlock bool
 
 	cmd := &cobra.Command{
@@ -27,7 +27,7 @@ application.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := GetServerContextFromCmd(cmd)
 
-			db, err := openDB(ctx.Config.RootDir, GetAppDBBackend(ctx.Viper))
+			db, err := OpenDB(ctx.Config.RootDir, GetAppDBBackend(ctx.Viper))
 			if err != nil {
 				return err
 			}

@@ -10,16 +10,24 @@ run:
     - ".*\\.pb\\.go$"
     - ".*\\.pb\\.gw\\.go$"
     - ".*\\.pulsar\\.go$"
+    - crypto/keys/secp256k1/internal/*
+    - types/coin_regex.go
+
+build-tags:
+  - e2e
+  - ledger
+  - test_ledger_mock
+
 
 linters:
   disable-all: true
   enable:
-    - errcheck
     - dogsled
+    - errcheck
     - exportloopref
+    - gci
     - goconst
     - gocritic
-    - gci
     - gofumpt
     - gosec
     - gosimple
@@ -28,11 +36,11 @@ linters:
     - misspell
     - nakedret
     - nolintlint
-    - staticcheck
     - revive
+    - staticcheck
     - stylecheck
-    - typecheck
     - thelper
+    - typecheck
     - unconvert
     - unused
 

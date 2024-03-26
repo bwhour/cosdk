@@ -18,10 +18,18 @@ func TestDefaultConfig(t *testing.T) {
 	require.True(t, cfg.GetMinGasPrices().IsZero())
 }
 
-func TestSetMinimumFees(t *testing.T) {
+func TestGetAndSetMinimumGas(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.SetMinGasPrices(sdk.DecCoins{sdk.NewInt64DecCoin("foo", 5)})
+
+	input := sdk.DecCoins{sdk.NewInt64DecCoin("foo", 5)}
+	cfg.SetMinGasPrices(input)
 	require.Equal(t, "5.000000000000000000foo", cfg.MinGasPrices)
+	require.EqualValues(t, cfg.GetMinGasPrices(), input)
+
+	input = sdk.DecCoins{sdk.NewInt64DecCoin("bar", 1), sdk.NewInt64DecCoin("foo", 5)}
+	cfg.SetMinGasPrices(input)
+	require.Equal(t, "1.000000000000000000bar,5.000000000000000000foo", cfg.MinGasPrices)
+	require.EqualValues(t, cfg.GetMinGasPrices(), input)
 }
 
 func TestIndexEventsMarshalling(t *testing.T) {
@@ -211,4 +219,22 @@ func TestSetConfigTemplate(t *testing.T) {
 	require.NoError(t, serr, "after SetConfigTemplate, configTemplate.Execute")
 	actual := setBuffer.String()
 	require.Equal(t, expected, actual, "resulting config strings")
+}
+
+func TestAppConfig(t *testing.T) {
+	appConfigFile := filepath.Join(t.TempDir(), "app.toml")
+	defer func() {
+		_ = os.Remove(appConfigFile)
+	}()
+
+	defAppConfig := DefaultConfig()
+	require.NoError(t, SetConfigTemplate(DefaultConfigTemplate))
+	require.NoError(t, WriteConfigFile(appConfigFile, defAppConfig))
+
+	v := viper.New()
+	v.SetConfigFile(appConfigFile)
+	require.NoError(t, v.ReadInConfig())
+	appCfg := new(Config)
+	require.NoError(t, v.Unmarshal(appCfg))
+	require.EqualValues(t, appCfg, defAppConfig)
 }

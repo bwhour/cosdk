@@ -86,10 +86,6 @@ func TestDecode(t *testing.T) {
 						Payer:    "payer",
 						Granter:  "",
 					},
-					Tip: &txv1beta1.Tip{
-						Amount: []*basev1beta1.Coin{{Amount: "100", Denom: "denom"}},
-						Tipper: "tipper",
-					},
 				},
 				Signatures: nil,
 			}
@@ -144,6 +140,6 @@ func TestDecodeTxBodyPanic(t *testing.T) {
 		t.Fatal("expected a non-nil error")
 	}
 	if g, w := err.Error(), "could not consume length prefix"; !strings.Contains(g, w) {
-		t.Fatalf("error mismatch\n%s\ndoes not contain\n\t%q", g, w)
+		t.Fatalf("error mismatch\n%s\nodes not contain\n\t%q", g, w)
 	}
 }

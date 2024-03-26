@@ -1,8 +1,10 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -277,20 +279,13 @@ func readTxCommandFlags(clientCtx Context, flagSet *pflag.FlagSet) (Context, err
 		from, _ := flagSet.GetString(flags.FlagFrom)
 		fromAddr, fromName, keyType, err := GetFromFields(clientCtx, clientCtx.Keyring, from)
 		if err != nil {
-			return clientCtx, err
+			return clientCtx, fmt.Errorf("failed to convert address field to address: %w", err)
 		}
 
 		clientCtx = clientCtx.WithFrom(from).WithFromAddress(fromAddr).WithFromName(fromName)
 
 		if keyType == keyring.TypeLedger && clientCtx.SignModeStr == flags.SignModeTextual {
-			textualEnabled := false
-			for _, v := range clientCtx.TxConfig.SignModeHandler().SupportedModes() {
-				if v == signingv1beta1.SignMode_SIGN_MODE_TEXTUAL {
-					textualEnabled = true
-					break
-				}
-			}
-			if !textualEnabled {
+			if !slices.Contains(clientCtx.TxConfig.SignModeHandler().SupportedModes(), signingv1beta1.SignMode_SIGN_MODE_TEXTUAL) {
 				return clientCtx, fmt.Errorf("SIGN_MODE_TEXTUAL is not available")
 			}
 		}
@@ -311,14 +306,12 @@ func readTxCommandFlags(clientCtx Context, flagSet *pflag.FlagSet) (Context, err
 		isAux, _ := flagSet.GetBool(flags.FlagAux)
 		clientCtx = clientCtx.WithAux(isAux)
 		if isAux {
-			// If the user didn't explicitly set an --output flag, use JSON by
-			// default.
+			// If the user didn't explicitly set an --output flag, use JSON by default.
 			if clientCtx.OutputFormat == "" || !flagSet.Changed(flags.FlagOutput) {
 				clientCtx = clientCtx.WithOutputFormat(flags.OutputFormatJSON)
 			}
 
-			// If the user didn't explicitly set a --sign-mode flag, use
-			// DIRECT_AUX by default.
+			// If the user didn't explicitly set a --sign-mode flag, use DIRECT_AUX by default.
 			if clientCtx.SignModeStr == "" || !flagSet.Changed(flags.FlagSignMode) {
 				clientCtx = clientCtx.WithSignModeStr(flags.SignModeDirectAux)
 			}
@@ -366,13 +359,14 @@ func GetClientContextFromCmd(cmd *cobra.Command) Context {
 // SetCmdClientContext sets a command's Context value to the provided argument.
 // If the context has not been set, set the given context as the default.
 func SetCmdClientContext(cmd *cobra.Command, clientCtx Context) error {
-	v := cmd.Context().Value(ClientContextKey)
-	if v == nil {
-		v = &clientCtx
+	var cmdCtx context.Context
+
+	if cmd.Context() == nil {
+		cmdCtx = context.Background()
+	} else {
+		cmdCtx = cmd.Context()
 	}
 
-	clientCtxPtr := v.(*Context)
-	*clientCtxPtr = clientCtx
-
+	cmd.SetContext(context.WithValue(cmdCtx, ClientContextKey, &clientCtx))
 	return nil
 }

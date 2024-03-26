@@ -23,11 +23,12 @@ go get cosmossdk.io/collections
 ## Core types
 
 Collections offers 5 different APIs to work with state, which will be explored in the next sections, these APIs are:
-- ``Map``: to work with typed arbitrary KV pairings.
-- ``KeySet``: to work with just typed keys
-- ``Item``: to work with just one typed value
-- ``Sequence``: which is a monotonically increasing number.
-- ``IndexedMap``: which combines ``Map`` and `KeySet` to provide a `Map` with indexing capabilities.
+
+* ``Map``: to work with typed arbitrary KV pairings.
+* ``KeySet``: to work with just typed keys
+* ``Item``: to work with just one typed value
+* ``Sequence``: which is a monotonically increasing number.
+* ``IndexedMap``: which combines ``Map`` and `KeySet` to provide a `Map` with indexing capabilities.
 
 ## Preliminary components
 
@@ -82,8 +83,9 @@ The second argument passed to our ``KeySet`` is a `collections.Prefix`, a prefix
 where all the state of a specific collection will be saved. 
 
 Since a module can have multiple collections, the following is expected:
-- module params will become a `collections.Item`
-- the `AllowList` is a `collections.KeySet`
+
+* module params will become a `collections.Item`
+* the `AllowList` is a `collections.KeySet`
 
 We don't want a collection to write over the state of the other collection so we pass it a prefix, which defines a storage
 partition owned by the collection.
@@ -91,6 +93,7 @@ partition owned by the collection.
 If you already built modules, the prefix translates to the items you were creating in your ``types/keys.go`` file, example: https://github.com/cosmos/cosmos-sdk/blob/main/x/feegrant/key.go#L27
 
 your old:
+
 ```go
 var (
 	// FeeAllowanceKeyPrefix is the set of the kvstore for fee allowance data
@@ -102,7 +105,9 @@ var (
 	FeeAllowanceQueueKeyPrefix = []byte{0x01}
 )
 ```
+
 becomes:
+
 ```go
 var (
 	// FeeAllowanceKeyPrefix is the set of the kvstore for fee allowance data
@@ -130,6 +135,7 @@ prefix2 := collections.NewPrefix("prefix") // THIS IS BAD!
 prefix1 := collections.NewPrefix("a")
 prefix2 := collections.NewPrefix("aa") // prefix2 starts with the same as prefix1: BAD!!!
 ```
+
 ### Human-Readable Name
 
 The third parameter we pass to a collection is a string, which is a human-readable name.
@@ -202,7 +208,7 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authtypes "cosmossdk.io/x/auth/types"
 )
 
 var AccountsPrefix = collections.NewPrefix(0)
@@ -251,7 +257,7 @@ import (
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authtypes "cosmossdk.io/x/auth/types"
 )
 
 var AccountsPrefix = collections.NewPrefix(0)
@@ -390,6 +396,7 @@ func (k Keeper) RemoveValidator(ctx sdk.Context, validator sdk.ValAddress) error
 	return nil
 }
 ```
+
 The first difference we notice is that `KeySet` needs use to specify only one type parameter: the key (`sdk.ValAddress` in this case).
 The second difference we notice is that `KeySet` in its `NewKeySet` function does not require
 us to specify a `ValueCodec` but only a `KeyCodec`. This is because a `KeySet` only saves keys and not values.
@@ -431,7 +438,7 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	stakingtypes "cosmossdk.io/x/staking/types"
 )
 
 var ParamsPrefix = collections.NewPrefix(0)
@@ -501,7 +508,7 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authtypes "cosmossdk.io/x/auth/types"
 )
 
 var AccountsPrefix = collections.NewPrefix(0)
@@ -597,7 +604,7 @@ we specified in the range.
 
 Then we use again th `Values` method of the `Iterator` to collect all the results.
 
-`collections.Range` also offers a `Prefix` API which is not appliable to all keys types,
+`collections.Range` also offers a `Prefix` API which is not applicable to all keys types,
 for example uint64 cannot be prefix because it is of constant size, but a `string` key
 can be prefixed.
 
@@ -679,6 +686,7 @@ func NewKeeper(storeKey *storetypes.KVStoreKey) Keeper {
 #### The Map Key definition
 
 First of all we can see that in order to define a composite key of two elements we use the `collections.Pair` type:
+
 ````go
 collections.Map[collections.Pair[sdk.AccAddress, string], math.Int]
 ````
@@ -788,7 +796,7 @@ in `Pair` keys iterations.
 ```
 
 As we can see here we're passing the type parameters of the `collections.Pair` because golang type inference
-with respect to generics is not as permissive as other languages, so we need to explitly say what are the types of the pair key.
+with respect to generics is not as permissive as other languages, so we need to explicitly say what are the types of the pair key.
 
 #### GetAllAddressesBalancesBetween
 
@@ -829,10 +837,6 @@ type AccountsIndexes struct {
 	Number *indexes.Unique[uint64, sdk.AccAddress, authtypes.BaseAccount]
 }
 
-func (a AccountsIndexes) IndexesList() []collections.Index[sdk.AccAddress, authtypes.BaseAccount] {
-	return []collections.Index[sdk.AccAddress, authtypes.BaseAccount]{a.Number}
-}
-
 func NewAccountIndexes(sb *collections.SchemaBuilder) AccountsIndexes {
 	return AccountsIndexes{
 		Number: indexes.NewUnique(
@@ -859,14 +863,22 @@ Where the first type parameter is `uint64`, which is the field type of our index
 The second type parameter is the primary key `sdk.AccAddress`
 And the third type parameter is the actual object we're storing `authtypes.BaseAccount`.
 
-Then we implement a function called `IndexesList` on our `AccountIndexes` struct, this will be used
-by the `IndexedMap` to keep the underlying map in sync with the indexes, in our case `Number`.
-This function just needs to return the slice of indexes contained in the struct.
-
 Then we create a `NewAccountIndexes` function that instantiates and returns the `AccountsIndexes` struct.
 
 The function takes a `SchemaBuilder`. Then we instantiate our `indexes.Unique`, let's analyse the arguments we pass to
 `indexes.NewUnique`.
+
+#### NOTE: indexes list
+
+The `AccountsIndexes` struct contains the indexes, the `NewIndexedMap` function will infer the indexes form that struct
+using reflection, this happens only at init and is not computationally expensive. In case you want to explicitly declare
+indexes: implement the `Indexes` interface in the `AccountsIndexes` struct:
+
+```go
+func (a AccountsIndexes) IndexesList() []collections.Index[sdk.AccAddress, authtypes.BaseAccount] {
+    return []collections.Index[sdk.AccAddress, authtypes.BaseAccount]{a.Number}
+}
+```
 
 #### Instantiating a `indexes.Unique`
 
@@ -918,7 +930,7 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authtypes "cosmossdk.io/x/auth/types"
 )
 
 var AccountsNumberIndexPrefix = collections.NewPrefix(1)
@@ -977,7 +989,7 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authtypes "cosmossdk.io/x/auth/types"
 )
 
 var AccountsNumberIndexPrefix = collections.NewPrefix(1)
@@ -1085,7 +1097,7 @@ import (
     storetypes "cosmossdk.io/store/types"
     "github.com/cosmos/cosmos-sdk/codec"
     sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authtypes "cosmossdk.io/x/auth/types"
 )
 
 var AccountsPrefix = collections.NewPrefix(0)

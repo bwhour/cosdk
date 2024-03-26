@@ -7,11 +7,11 @@ import (
 	"time"
 
 	sdkmath "cosmossdk.io/math"
+	"cosmossdk.io/x/staking/types"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/types/simulation"
-	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // Simulation parameter constants
@@ -19,6 +19,7 @@ const (
 	unbondingTime     = "unbonding_time"
 	maxValidators     = "max_validators"
 	historicalEntries = "historical_entries"
+	keyRotationFee    = "cons_pubkey_rotation_fee"
 )
 
 // genUnbondingTime returns randomized UnbondingTime
@@ -36,6 +37,11 @@ func getHistEntries(r *rand.Rand) uint32 {
 	return uint32(r.Intn(int(types.DefaultHistoricalEntries + 1)))
 }
 
+// getKeyRotationFee returns randomized keyRotationFee between 10000-1000000.
+func getKeyRotationFee(r *rand.Rand) sdk.Coin {
+	return sdk.NewInt64Coin(sdk.DefaultBondDenom, r.Int63n(types.DefaultKeyRotationFee.Amount.Int64()-10000)+10000)
+}
+
 // RandomizedGenState generates a random GenesisState for staking
 func RandomizedGenState(simState *module.SimulationState) {
 	// params
@@ -44,6 +50,7 @@ func RandomizedGenState(simState *module.SimulationState) {
 		maxVals           uint32
 		histEntries       uint32
 		minCommissionRate sdkmath.LegacyDec
+		rotationFee       sdk.Coin
 	)
 
 	simState.AppParams.GetOrGenerate(unbondingTime, &unbondTime, simState.Rand, func(r *rand.Rand) { unbondTime = genUnbondingTime(r) })
@@ -52,10 +59,12 @@ func RandomizedGenState(simState *module.SimulationState) {
 
 	simState.AppParams.GetOrGenerate(historicalEntries, &histEntries, simState.Rand, func(r *rand.Rand) { histEntries = getHistEntries(r) })
 
+	simState.AppParams.GetOrGenerate(keyRotationFee, &histEntries, simState.Rand, func(r *rand.Rand) { rotationFee = getKeyRotationFee(r) })
+
 	// NOTE: the slashing module need to be defined after the staking module on the
 	// NewSimulationManager constructor for this to work
 	simState.UnbondTime = unbondTime
-	params := types.NewParams(simState.UnbondTime, maxVals, 7, histEntries, simState.BondDenom, minCommissionRate)
+	params := types.NewParams(simState.UnbondTime, maxVals, 7, histEntries, simState.BondDenom, minCommissionRate, rotationFee)
 
 	// validators & delegations
 	var (
@@ -67,6 +76,10 @@ func RandomizedGenState(simState *module.SimulationState) {
 
 	for i := 0; i < int(simState.NumBonded); i++ {
 		valAddr := sdk.ValAddress(simState.Accounts[i].Address)
+		ValStrAddress, err := simState.ValidatorCodec.BytesToString(valAddr)
+		if err != nil {
+			panic(err)
+		}
 		valAddrs[i] = valAddr
 
 		maxCommission := sdkmath.LegacyNewDecWithPrec(int64(simulation.RandIntBetween(simState.Rand, 1, 100)), 2)
@@ -76,7 +89,7 @@ func RandomizedGenState(simState *module.SimulationState) {
 			simulation.RandomDecAmount(simState.Rand, maxCommission),
 		)
 
-		validator, err := types.NewValidator(valAddr.String(), simState.Accounts[i].ConsKey.PubKey(), types.Description{})
+		validator, err := types.NewValidator(ValStrAddress, simState.Accounts[i].ConsKey.PubKey(), types.Description{})
 		if err != nil {
 			panic(err)
 		}
@@ -84,7 +97,11 @@ func RandomizedGenState(simState *module.SimulationState) {
 		validator.DelegatorShares = sdkmath.LegacyNewDecFromInt(simState.InitialStake)
 		validator.Commission = commission
 
-		delegation := types.NewDelegation(simState.Accounts[i].Address.String(), valAddr.String(), sdkmath.LegacyNewDecFromInt(simState.InitialStake))
+		accAddress, err := simState.AddressCodec.BytesToString(simState.Accounts[i].Address)
+		if err != nil {
+			panic(err)
+		}
+		delegation := types.NewDelegation(accAddress, ValStrAddress, sdkmath.LegacyNewDecFromInt(simState.InitialStake))
 
 		validators = append(validators, validator)
 		delegations = append(delegations, delegation)

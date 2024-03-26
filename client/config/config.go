@@ -12,11 +12,12 @@ import (
 // DefaultConfig returns default config for the client.toml
 func DefaultConfig() *Config {
 	return &Config{
-		ChainID:        "",
-		KeyringBackend: "os",
-		Output:         "text",
-		Node:           "tcp://localhost:26657",
-		BroadcastMode:  "sync",
+		ChainID:               "",
+		KeyringBackend:        "os",
+		KeyringDefaultKeyName: "",
+		Output:                "text",
+		Node:                  "tcp://localhost:26657",
+		BroadcastMode:         "sync",
 	}
 }
 
@@ -25,17 +26,39 @@ func DefaultConfig() *Config {
 type ClientConfig Config
 
 type Config struct {
-	ChainID        string `mapstructure:"chain-id" json:"chain-id"`
-	KeyringBackend string `mapstructure:"keyring-backend" json:"keyring-backend"`
-	Output         string `mapstructure:"output" json:"output"`
-	Node           string `mapstructure:"node" json:"node"`
-	BroadcastMode  string `mapstructure:"broadcast-mode" json:"broadcast-mode"`
+	ChainID               string `mapstructure:"chain-id" json:"chain-id"`
+	KeyringBackend        string `mapstructure:"keyring-backend" json:"keyring-backend"`
+	KeyringDefaultKeyName string `mapstructure:"keyring-default-keyname" json:"keyring-default-keyname"`
+	Output                string `mapstructure:"output" json:"output"`
+	Node                  string `mapstructure:"node" json:"node"`
+	BroadcastMode         string `mapstructure:"broadcast-mode" json:"broadcast-mode"`
 }
 
 // ReadFromClientConfig reads values from client.toml file and updates them in client.Context
 // It uses CreateClientConfig internally with no custom template and custom config.
+// Deprecated: use CreateClientConfig instead.
 func ReadFromClientConfig(ctx client.Context) (client.Context, error) {
 	return CreateClientConfig(ctx, "", nil)
+}
+
+// ReadDefaultValuesFromDefaultClientConfig reads default values from default client.toml file and updates them in client.Context
+// The client.toml is then discarded.
+func ReadDefaultValuesFromDefaultClientConfig(ctx client.Context, customClientTemplate string, customConfig interface{}) (client.Context, error) {
+	prevHomeDir := ctx.HomeDir
+	dir, err := os.MkdirTemp("", "simapp")
+	if err != nil {
+		return ctx, fmt.Errorf("couldn't create temp dir: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	ctx.HomeDir = dir
+	ctx, err = CreateClientConfig(ctx, customClientTemplate, customConfig)
+	if err != nil {
+		return ctx, fmt.Errorf("couldn't create client config: %w", err)
+	}
+
+	ctx.HomeDir = prevHomeDir
+	return ctx, nil
 }
 
 // CreateClientConfig reads the client.toml file and returns a new populated client.Context
@@ -46,7 +69,7 @@ func CreateClientConfig(ctx client.Context, customClientTemplate string, customC
 	configPath := filepath.Join(ctx.HomeDir, "config")
 	configFilePath := filepath.Join(configPath, "client.toml")
 
-	// when config.toml does not exist create and init with default values
+	// when client.toml does not exist create and init with default values
 	if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
 		if err := os.MkdirAll(configPath, os.ModePerm); err != nil {
 			return ctx, fmt.Errorf("couldn't make client config: %w", err)
@@ -95,7 +118,8 @@ func CreateClientConfig(ctx client.Context, customClientTemplate string, customC
 	// we need to update KeyringDir field on client.Context first cause it is used in NewKeyringFromBackend
 	ctx = ctx.WithOutputFormat(conf.Output).
 		WithChainID(conf.ChainID).
-		WithKeyringDir(ctx.HomeDir)
+		WithKeyringDir(ctx.HomeDir).
+		WithKeyringDefaultKeyName(conf.KeyringDefaultKeyName)
 
 	keyring, err := client.NewKeyringFromBackend(ctx, conf.KeyringBackend)
 	if err != nil {

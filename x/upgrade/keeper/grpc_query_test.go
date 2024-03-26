@@ -8,41 +8,47 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"cosmossdk.io/core/header"
+	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
+	authtypes "cosmossdk.io/x/auth/types"
 	"cosmossdk.io/x/upgrade"
 	"cosmossdk.io/x/upgrade/keeper"
 	"cosmossdk.io/x/upgrade/types"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 )
 
 type UpgradeTestSuite struct {
 	suite.Suite
 
-	upgradeKeeper *keeper.Keeper
-	ctx           sdk.Context
-	queryClient   types.QueryClient
-	encCfg        moduletestutil.TestEncodingConfig
+	upgradeKeeper    *keeper.Keeper
+	ctx              sdk.Context
+	queryClient      types.QueryClient
+	encCfg           moduletestutil.TestEncodingConfig
+	encodedAuthority string
 }
 
 func (suite *UpgradeTestSuite) SetupTest() {
-	suite.encCfg = moduletestutil.MakeTestEncodingConfig(upgrade.AppModuleBasic{})
+	suite.encCfg = moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, upgrade.AppModule{})
 	key := storetypes.NewKVStoreKey(types.StoreKey)
 	storeService := runtime.NewKVStoreService(key)
+	env := runtime.NewEnvironment(storeService, log.NewNopLogger())
 	testCtx := testutil.DefaultContextWithDB(suite.T(), key, storetypes.NewTransientStoreKey("transient_test"))
 	suite.ctx = testCtx.Ctx
 
 	skipUpgradeHeights := make(map[int64]bool)
-
-	suite.upgradeKeeper = keeper.NewKeeper(skipUpgradeHeights, storeService, suite.encCfg.Codec, suite.T().TempDir(), nil, authtypes.NewModuleAddress(govtypes.ModuleName).String())
-	err := suite.upgradeKeeper.SetModuleVersionMap(suite.ctx, module.VersionMap{
+	authority, err := addresscodec.NewBech32Codec("cosmos").BytesToString(authtypes.NewModuleAddress(types.GovModuleName))
+	suite.Require().NoError(err)
+	suite.encodedAuthority = authority
+	suite.upgradeKeeper = keeper.NewKeeper(env, skipUpgradeHeights, suite.encCfg.Codec, suite.T().TempDir(), nil, authority)
+	err = suite.upgradeKeeper.SetModuleVersionMap(suite.ctx, module.VersionMap{
 		"bank": 0,
 	})
 	suite.Require().NoError(err)
@@ -230,7 +236,7 @@ func (suite *UpgradeTestSuite) TestModuleVersions() {
 func (suite *UpgradeTestSuite) TestAuthority() {
 	res, err := suite.queryClient.Authority(context.Background(), &types.QueryAuthorityRequest{})
 	suite.Require().NoError(err)
-	suite.Require().Equal(authtypes.NewModuleAddress(govtypes.ModuleName).String(), res.Address)
+	suite.Require().Equal(suite.encodedAuthority, res.Address)
 }
 
 func TestUpgradeTestSuite(t *testing.T) {

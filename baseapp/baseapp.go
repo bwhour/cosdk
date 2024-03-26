@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/cockroachdb/errors"
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/exp/maps"
 	protov2 "google.golang.org/protobuf/proto"
 
+	"cosmossdk.io/core/header"
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
@@ -23,6 +25,7 @@ import (
 	"cosmossdk.io/store/snapshots"
 	storetypes "cosmossdk.io/store/types"
 
+	"github.com/cosmos/cosmos-sdk/baseapp/oe"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
@@ -43,20 +46,15 @@ type (
 	StoreLoader func(ms storetypes.CommitMultiStore) error
 )
 
-// MigrationModuleManager is the interface that a migration module manager should implement to handle
-// the execution of migration logic during the beginning of a block.
-type MigrationModuleManager interface {
-	RunMigrationBeginBlock(ctx sdk.Context) (bool, error)
-}
-
 const (
-	execModeCheck           execMode = iota // Check a transaction
-	execModeReCheck                         // Recheck a (pending) transaction after a commit
-	execModeSimulate                        // Simulate a transaction
-	execModePrepareProposal                 // Prepare a block proposal
-	execModeProcessProposal                 // Process a block proposal
-	execModeVoteExtension                   // Extend or verify a pre-commit vote
-	execModeFinalize                        // Finalize a block proposal
+	execModeCheck               execMode = iota // Check a transaction
+	execModeReCheck                             // Recheck a (pending) transaction after a commit
+	execModeSimulate                            // Simulate a transaction
+	execModePrepareProposal                     // Prepare a block proposal
+	execModeProcessProposal                     // Process a block proposal
+	execModeVoteExtension                       // Extend or verify a pre-commit vote
+	execModeVerifyVoteExtension                 // Verify a vote extension
+	execModeFinalize                            // Finalize a block proposal
 )
 
 var _ servertypes.ABCI = (*BaseApp)(nil)
@@ -64,6 +62,7 @@ var _ servertypes.ABCI = (*BaseApp)(nil)
 // BaseApp reflects the ABCI application implementation.
 type BaseApp struct {
 	// initialized on creation
+	mu                sync.Mutex // mu protects the fields below.
 	logger            log.Logger
 	name              string                      // application name from abci.BlockInfo
 	db                dbm.DB                      // common DB backend
@@ -78,28 +77,26 @@ type BaseApp struct {
 
 	mempool     mempool.Mempool // application side mempool
 	anteHandler sdk.AnteHandler // ante handler for fee and auth
-	postHandler sdk.PostHandler // post handler, optional, e.g. for tips
+	postHandler sdk.PostHandler // post handler, optional
 
-	initChainer          sdk.InitChainer                // ABCI InitChain handler
-	beginBlocker         sdk.BeginBlocker               // (legacy ABCI) BeginBlock handler
-	endBlocker           sdk.EndBlocker                 // (legacy ABCI) EndBlock handler
-	processProposal      sdk.ProcessProposalHandler     // ABCI ProcessProposal handler
-	prepareProposal      sdk.PrepareProposalHandler     // ABCI PrepareProposal
-	extendVote           sdk.ExtendVoteHandler          // ABCI ExtendVote handler
-	verifyVoteExt        sdk.VerifyVoteExtensionHandler // ABCI VerifyVoteExtension handler
-	prepareCheckStater   sdk.PrepareCheckStater         // logic to run during commit using the checkState
-	precommiter          sdk.Precommiter                // logic to run during commit using the deliverState
-	preFinalizeBlockHook sdk.PreFinalizeBlockHook       // logic to run before FinalizeBlock
+	initChainer        sdk.InitChainer                // ABCI InitChain handler
+	preBlocker         sdk.PreBlocker                 // logic to run before BeginBlocker
+	beginBlocker       sdk.BeginBlocker               // (legacy ABCI) BeginBlock handler
+	endBlocker         sdk.EndBlocker                 // (legacy ABCI) EndBlock handler
+	processProposal    sdk.ProcessProposalHandler     // ABCI ProcessProposal handler
+	prepareProposal    sdk.PrepareProposalHandler     // ABCI PrepareProposal handler
+	extendVote         sdk.ExtendVoteHandler          // ABCI ExtendVote handler
+	verifyVoteExt      sdk.VerifyVoteExtensionHandler // ABCI VerifyVoteExtension handler
+	prepareCheckStater sdk.PrepareCheckStater         // logic to run during commit using the checkState
+	precommiter        sdk.Precommiter                // logic to run during commit using the deliverState
 
 	addrPeerFilter sdk.PeerFilter // filter peers by address and port
 	idPeerFilter   sdk.PeerFilter // filter peers by node ID
 	fauxMerkleMode bool           // if true, IAVL MountStores uses MountStoresDB for simulation speed.
+	sigverifyTx    bool           // in the simulation test, since the account does not have a private key, we have to ignore the tx sigverify.
 
 	// manages snapshots, i.e. dumps of app state at certain intervals
 	snapshotManager *snapshots.Manager
-
-	// manages migrate module
-	migrationModuleManager MigrationModuleManager
 
 	// volatile states:
 	//
@@ -115,8 +112,8 @@ type BaseApp struct {
 	// consensus rounds, the state is always reset to the previous block's state.
 	//
 	// - processProposalState: Used for ProcessProposal, which is set based on the
-	// the previous block's state. This state is never committed. In case of
-	// multiple rounds, the state is always reset to the previous block's state.
+	// previous block's state. This state is never committed. In case of multiple
+	// consensus rounds, the state is always reset to the previous block's state.
 	//
 	// - finalizeBlockState: Used for FinalizeBlock, which is set based on the
 	// previous block's state. This state is committed.
@@ -158,7 +155,7 @@ type BaseApp struct {
 	// ResponseCommit.RetainHeight value during ABCI Commit. A value of 0 indicates
 	// that no blocks should be pruned.
 	//
-	// Note: CometBFT block pruning is dependant on this parameter in conjunction
+	// Note: CometBFT block pruning is dependent on this parameter in conjunction
 	// with the unbonding (safety threshold) period, state pruning and state sync
 	// snapshot parameters to determine the correct minimum value of
 	// ResponseCommit.RetainHeight.
@@ -183,6 +180,11 @@ type BaseApp struct {
 	chainID string
 
 	cdc codec.Codec
+
+	// optimisticExec contains the context required for Optimistic Execution,
+	// including the goroutine handling.This is experimental and must be enabled
+	// by developers.
+	optimisticExec *oe.OptimisticExecution
 }
 
 // NewBaseApp returns a reference to an initialized BaseApp. It accepts a
@@ -192,7 +194,7 @@ func NewBaseApp(
 	name string, logger log.Logger, db dbm.DB, txDecoder sdk.TxDecoder, options ...func(*BaseApp),
 ) *BaseApp {
 	app := &BaseApp{
-		logger:           logger,
+		logger:           logger.With(log.ModuleKey, "baseapp"),
 		name:             name,
 		db:               db,
 		cms:              store.NewCommitMultiStore(db, logger, storemetrics.NewNoOpMetrics()), // by default we use a no-op metric gather in store
@@ -201,6 +203,7 @@ func NewBaseApp(
 		msgServiceRouter: NewMsgServiceRouter(),
 		txDecoder:        txDecoder,
 		fauxMerkleMode:   false,
+		sigverifyTx:      true,
 		queryGasLimit:    math.MaxUint64,
 	}
 
@@ -278,15 +281,8 @@ func (app *BaseApp) Trace() bool {
 // MsgServiceRouter returns the MsgServiceRouter of a BaseApp.
 func (app *BaseApp) MsgServiceRouter() *MsgServiceRouter { return app.msgServiceRouter }
 
-// SetMsgServiceRouter sets the MsgServiceRouter of a BaseApp.
-func (app *BaseApp) SetMsgServiceRouter(msgServiceRouter *MsgServiceRouter) {
-	app.msgServiceRouter = msgServiceRouter
-}
-
-// SetMigrationModuleManager sets the MigrationModuleManager of a BaseApp.
-func (app *BaseApp) SetMigrationModuleManager(migrationModuleManager MigrationModuleManager) {
-	app.migrationModuleManager = migrationModuleManager
-}
+// GRPCQueryRouter returns the GRPCQueryRouter of a BaseApp.
+func (app *BaseApp) GRPCQueryRouter() *GRPCQueryRouter { return app.grpcQueryRouter }
 
 // MountStores mounts all IAVL or DB stores to the provided keys in the BaseApp
 // multistore.
@@ -414,6 +410,11 @@ func (app *BaseApp) AnteHandler() sdk.AnteHandler {
 	return app.anteHandler
 }
 
+// Mempool returns the Mempool of the app.
+func (app *BaseApp) Mempool() mempool.Mempool {
+	return app.mempool
+}
+
 // Init initializes the app. It seals the app, preventing any
 // further modifications. In addition, it validates the app against
 // the earlier provided settings. Returns an error if validation fails.
@@ -423,15 +424,15 @@ func (app *BaseApp) Init() error {
 		panic("cannot call initFromMainStore: baseapp already sealed")
 	}
 
+	if app.cms == nil {
+		return errors.New("commit multi-store must not be nil")
+	}
+
 	emptyHeader := cmtproto.Header{ChainID: app.chainID}
 
 	// needed for the export command which inits from store but never calls initchain
 	app.setState(execModeCheck, emptyHeader)
 	app.Seal()
-
-	if app.cms == nil {
-		return errors.New("commit multi-store must not be nil")
-	}
 
 	return app.cms.GetPruning().Validate()
 }
@@ -477,16 +478,25 @@ func (app *BaseApp) IsSealed() bool { return app.sealed }
 // setState sets the BaseApp's state for the corresponding mode with a branched
 // multi-store (i.e. a CacheMultiStore) and a new Context with the same
 // multi-store branch, and provided header.
-func (app *BaseApp) setState(mode execMode, header cmtproto.Header) {
+func (app *BaseApp) setState(mode execMode, h cmtproto.Header) {
 	ms := app.cms.CacheMultiStore()
+	headerInfo := header.Info{
+		Height:  h.Height,
+		Time:    h.Time,
+		ChainID: h.ChainID,
+		AppHash: h.AppHash,
+	}
 	baseState := &state{
-		ms:  ms,
-		ctx: sdk.NewContext(ms, false, app.logger).WithStreamingManager(app.streamingManager).WithBlockHeader(header),
+		ms: ms,
+		ctx: sdk.NewContext(ms, false, app.logger).
+			WithStreamingManager(app.streamingManager).
+			WithBlockHeader(h).
+			WithHeaderInfo(headerInfo),
 	}
 
 	switch mode {
 	case execModeCheck:
-		baseState.ctx = baseState.ctx.WithIsCheckTx(true).WithMinGasPrices(app.minGasPrices)
+		baseState.SetContext(baseState.Context().WithIsCheckTx(true).WithMinGasPrices(app.minGasPrices))
 		app.checkState = baseState
 
 	case execModePrepareProposal:
@@ -521,7 +531,11 @@ func (app *BaseApp) GetConsensusParams(ctx sdk.Context) cmtproto.ConsensusParams
 
 	cp, err := app.paramStore.Get(ctx)
 	if err != nil {
-		panic(fmt.Errorf("consensus key is nil: %w", err))
+		// This could happen while migrating from v0.45/v0.46 to v0.50, we should
+		// allow it to happen so during preblock the upgrade plan can be executed
+		// and the consensus params set for the first time in the new format.
+		app.logger.Error("failed to get consensus params", "err", err)
+		return cmtproto.ConsensusParams{}
 	}
 
 	return cp
@@ -596,20 +610,22 @@ func (app *BaseApp) validateFinalizeBlockHeight(req *abci.RequestFinalizeBlock) 
 	return nil
 }
 
-// validateBasicTxMsgs executes basic validator calls for messages.
-func validateBasicTxMsgs(msgs []sdk.Msg) error {
+// validateBasicTxMsgs executes basic validator calls for messages firstly by invoking
+// .ValidateBasic if possible, then checking if the message has a known handler.
+func validateBasicTxMsgs(router *MsgServiceRouter, msgs []sdk.Msg) error {
 	if len(msgs) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "must contain at least one message")
 	}
 
 	for _, msg := range msgs {
-		m, ok := msg.(sdk.HasValidateBasic)
-		if !ok {
-			continue
+		if m, ok := msg.(sdk.HasValidateBasic); ok {
+			if err := m.ValidateBasic(); err != nil {
+				return err
+			}
 		}
 
-		if err := m.ValidateBasic(); err != nil {
-			return err
+		if router != nil && router.Handler(msg) == nil {
+			return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "no message handler found for %T", msg)
 		}
 	}
 
@@ -642,13 +658,18 @@ func (app *BaseApp) getBlockGasMeter(ctx sdk.Context) storetypes.GasMeter {
 
 // retrieve the context for the tx w/ txBytes and other memoized values.
 func (app *BaseApp) getContextForTx(mode execMode, txBytes []byte) sdk.Context {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
 	modeState := app.getState(mode)
 	if modeState == nil {
 		panic(fmt.Sprintf("state is nil for mode %v", mode))
 	}
-	ctx := modeState.ctx.
+	ctx := modeState.Context().
 		WithTxBytes(txBytes)
 	// WithVoteInfos(app.voteInfos) // TODO: identify if this is needed
+
+	ctx = ctx.WithIsSigverifyTx(app.sigverifyTx)
 
 	ctx = ctx.WithConsensusParams(app.GetConsensusParams(ctx))
 
@@ -682,6 +703,23 @@ func (app *BaseApp) cacheTxContext(ctx sdk.Context, txBytes []byte) (sdk.Context
 	return ctx.WithMultiStore(msCache), msCache
 }
 
+func (app *BaseApp) preBlock(req *abci.RequestFinalizeBlock) error {
+	if app.preBlocker != nil {
+		ctx := app.finalizeBlockState.Context()
+		if err := app.preBlocker(ctx, req); err != nil {
+			return err
+		}
+		// ConsensusParams can change in preblocker, so we need to
+		// write the consensus parameters in store to context
+		ctx = ctx.WithConsensusParams(app.GetConsensusParams(ctx))
+		// GasMeter must be set after we get a context with updated consensus params.
+		gasMeter := app.getBlockGasMeter(ctx)
+		ctx = ctx.WithBlockGasMeter(gasMeter)
+		app.finalizeBlockState.SetContext(ctx)
+	}
+	return nil
+}
+
 func (app *BaseApp) beginBlock(req *abci.RequestFinalizeBlock) (sdk.BeginBlock, error) {
 	var (
 		resp sdk.BeginBlock
@@ -689,27 +727,12 @@ func (app *BaseApp) beginBlock(req *abci.RequestFinalizeBlock) (sdk.BeginBlock, 
 	)
 
 	if app.beginBlocker != nil {
-		ctx := app.finalizeBlockState.ctx
-		if app.migrationModuleManager != nil {
-			if success, err := app.migrationModuleManager.RunMigrationBeginBlock(ctx); success {
-				cp := ctx.ConsensusParams()
-				// Manager skips this step if Block is non-nil since upgrade module is expected to set this params
-				// and consensus parameters should not be overwritten.
-				if cp.Block == nil {
-					if cp = app.GetConsensusParams(ctx); cp.Block != nil {
-						ctx = ctx.WithConsensusParams(cp)
-					}
-				}
-			} else if err != nil {
-				return sdk.BeginBlock{}, err
-			}
-		}
-		resp, err = app.beginBlocker(ctx)
+		resp, err = app.beginBlocker(app.finalizeBlockState.Context())
 		if err != nil {
 			return resp, err
 		}
 
-		// append BeginBlock attributes to all events in the EndBlock response
+		// append BeginBlock attributes to all events in the BeginBlock response
 		for i, event := range resp.Events {
 			resp.Events[i].Attributes = append(
 				event.Attributes,
@@ -766,7 +789,7 @@ func (app *BaseApp) endBlock(ctx context.Context) (sdk.EndBlock, error) {
 	var endblock sdk.EndBlock
 
 	if app.endBlocker != nil {
-		eb, err := app.endBlocker(app.finalizeBlockState.ctx)
+		eb, err := app.endBlocker(app.finalizeBlockState.Context())
 		if err != nil {
 			return endblock, err
 		}
@@ -847,15 +870,8 @@ func (app *BaseApp) runTx(mode execMode, txBytes []byte) (gInfo sdk.GasInfo, res
 	}
 
 	msgs := tx.GetMsgs()
-	if err := validateBasicTxMsgs(msgs); err != nil {
+	if err := validateBasicTxMsgs(app.msgServiceRouter, msgs); err != nil {
 		return sdk.GasInfo{}, nil, nil, err
-	}
-
-	for _, msg := range msgs {
-		handler := app.msgServiceRouter.Handler(msg)
-		if handler == nil {
-			return sdk.GasInfo{}, nil, nil, errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "no message handler found for %T", msg)
-		}
 	}
 
 	if app.anteHandler != nil {
@@ -873,6 +889,9 @@ func (app *BaseApp) runTx(mode execMode, txBytes []byte) (gInfo sdk.GasInfo, res
 		// performance benefits, but it'll be more difficult to get right.
 		anteCtx, msCache = app.cacheTxContext(ctx, txBytes)
 		anteCtx = anteCtx.WithEventManager(sdk.NewEventManager())
+		if mode == execModeSimulate {
+			anteCtx = anteCtx.WithExecMode(sdk.ExecMode(execModeSimulate))
+		}
 		newCtx, err := app.anteHandler(anteCtx, tx, mode == execModeSimulate)
 
 		if !newCtx.IsZero() {
@@ -923,24 +942,29 @@ func (app *BaseApp) runTx(mode execMode, txBytes []byte) (gInfo sdk.GasInfo, res
 	if err == nil {
 		result, err = app.runMsgs(runMsgCtx, msgs, msgsV2, mode)
 	}
-	if err == nil {
-		// Run optional postHandlers.
-		//
-		// Note: If the postHandler fails, we also revert the runMsgs state.
-		if app.postHandler != nil {
-			// The runMsgCtx context currently contains events emitted by the ante handler.
-			// We clear this to correctly order events without duplicates.
-			// Note that the state is still preserved.
-			postCtx := runMsgCtx.WithEventManager(sdk.NewEventManager())
 
-			newCtx, err := app.postHandler(postCtx, tx, mode == execModeSimulate, err == nil)
-			if err != nil {
-				return gInfo, nil, anteEvents, err
-			}
+	// Run optional postHandlers (should run regardless of the execution result).
+	//
+	// Note: If the postHandler fails, we also revert the runMsgs state.
+	if app.postHandler != nil {
+		// The runMsgCtx context currently contains events emitted by the ante handler.
+		// We clear this to correctly order events without duplicates.
+		// Note that the state is still preserved.
+		postCtx := runMsgCtx.WithEventManager(sdk.NewEventManager())
 
-			result.Events = append(result.Events, newCtx.EventManager().ABCIEvents()...)
+		newCtx, errPostHandler := app.postHandler(postCtx, tx, mode == execModeSimulate, err == nil)
+		if errPostHandler != nil {
+			return gInfo, nil, anteEvents, errors.Join(err, errPostHandler)
 		}
 
+		// we don't want runTx to panic if runMsgs has failed earlier
+		if result == nil {
+			result = &sdk.Result{}
+		}
+		result.Events = append(result.Events, newCtx.EventManager().ABCIEvents()...)
+	}
+
+	if err == nil {
 		if mode == execModeFinalize {
 			// When block gas exceeds, it'll panic and won't commit the cached store.
 			consumeBlockGas()
@@ -1095,7 +1119,37 @@ func (app *BaseApp) ProcessProposalVerifyTx(txBz []byte) (sdk.Tx, error) {
 	return tx, nil
 }
 
+func (app *BaseApp) TxDecode(txBytes []byte) (sdk.Tx, error) {
+	return app.txDecoder(txBytes)
+}
+
+func (app *BaseApp) TxEncode(tx sdk.Tx) ([]byte, error) {
+	return app.txEncoder(tx)
+}
+
 // Close is called in start cmd to gracefully cleanup resources.
 func (app *BaseApp) Close() error {
-	return nil
+	var errs []error
+
+	// Close app.db (opened by cosmos-sdk/server/start.go call to openDB)
+	if app.db != nil {
+		app.logger.Info("Closing application.db")
+		if err := app.db.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	// Close app.snapshotManager
+	// - opened when app chains use cosmos-sdk/server/util.go/DefaultBaseappOptions (boilerplate)
+	// - which calls cosmos-sdk/server/util.go/GetSnapshotStore
+	// - which is passed to baseapp/options.go/SetSnapshot
+	// - to set app.snapshotManager = snapshots.NewManager
+	if app.snapshotManager != nil {
+		app.logger.Info("Closing snapshots/metadata.db")
+		if err := app.snapshotManager.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }

@@ -3,12 +3,12 @@ package tx
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"strings"
 
 	"github.com/cosmos/go-bip39"
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 
 	"cosmossdk.io/math"
 
@@ -16,10 +16,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 )
 
@@ -35,11 +35,12 @@ type Factory struct {
 	timeoutHeight      uint64
 	gasAdjustment      float64
 	chainID            string
+	fromName           string
+	unordered          bool
 	offline            bool
 	generateOnly       bool
 	memo               string
 	fees               sdk.Coins
-	tip                *tx.Tip
 	feeGranter         sdk.AccAddress
 	feePayer           sdk.AccAddress
 	gasPrices          sdk.DecCoins
@@ -52,17 +53,15 @@ type Factory struct {
 // NewFactoryCLI creates a new Factory.
 func NewFactoryCLI(clientCtx client.Context, flagSet *pflag.FlagSet) (Factory, error) {
 	if clientCtx.Viper == nil {
-		clientCtx.Viper = viper.New()
+		clientCtx = clientCtx.WithViper("")
 	}
 
 	if err := clientCtx.Viper.BindPFlags(flagSet); err != nil {
 		return Factory{}, fmt.Errorf("failed to bind flags to viper: %w", err)
 	}
 
-	signModeStr := clientCtx.SignModeStr
-
 	signMode := signing.SignMode_SIGN_MODE_UNSPECIFIED
-	switch signModeStr {
+	switch clientCtx.SignModeStr {
 	case flags.SignModeDirect:
 		signMode = signing.SignMode_SIGN_MODE_DIRECT
 	case flags.SignModeLegacyAminoJSON:
@@ -88,6 +87,7 @@ func NewFactoryCLI(clientCtx client.Context, flagSet *pflag.FlagSet) (Factory, e
 	gasAdj := clientCtx.Viper.GetFloat64(flags.FlagGasAdjustment)
 	memo := clientCtx.Viper.GetString(flags.FlagNote)
 	timeoutHeight := clientCtx.Viper.GetUint64(flags.FlagTimeoutHeight)
+	unordered := clientCtx.Viper.GetBool(flags.FlagUnordered)
 
 	gasStr := clientCtx.Viper.GetString(flags.FlagGas)
 	gasSetting, _ := flags.ParseGasSetting(gasStr)
@@ -97,6 +97,7 @@ func NewFactoryCLI(clientCtx client.Context, flagSet *pflag.FlagSet) (Factory, e
 		accountRetriever:   clientCtx.AccountRetriever,
 		keybase:            clientCtx.Keyring,
 		chainID:            clientCtx.ChainID,
+		fromName:           clientCtx.FromName,
 		offline:            clientCtx.Offline,
 		generateOnly:       clientCtx.GenerateOnly,
 		gas:                gasSetting.Gas,
@@ -104,6 +105,7 @@ func NewFactoryCLI(clientCtx client.Context, flagSet *pflag.FlagSet) (Factory, e
 		accountNumber:      accNum,
 		sequence:           accSeq,
 		timeoutHeight:      timeoutHeight,
+		unordered:          unordered,
 		gasAdjustment:      gasAdj,
 		memo:               memo,
 		signMode:           signMode,
@@ -113,11 +115,6 @@ func NewFactoryCLI(clientCtx client.Context, flagSet *pflag.FlagSet) (Factory, e
 
 	feesStr := clientCtx.Viper.GetString(flags.FlagFees)
 	f = f.WithFees(feesStr)
-
-	tipsStr := clientCtx.Viper.GetString(flags.FlagTip)
-	// Add tips to factory. The tipper is necessarily the Msg signer, i.e.
-	// the from address.
-	f = f.WithTips(tipsStr, clientCtx.FromAddress.String())
 
 	gasPricesStr := clientCtx.Viper.GetString(flags.FlagGasPrices)
 	f = f.WithGasPrices(gasPricesStr)
@@ -138,6 +135,8 @@ func (f Factory) Fees() sdk.Coins                           { return f.fees }
 func (f Factory) GasPrices() sdk.DecCoins                   { return f.gasPrices }
 func (f Factory) AccountRetriever() client.AccountRetriever { return f.accountRetriever }
 func (f Factory) TimeoutHeight() uint64                     { return f.timeoutHeight }
+func (f Factory) Unordered() bool                           { return f.unordered }
+func (f Factory) FromName() string                          { return f.fromName }
 
 // SimulateAndExecute returns the option to simulate and then execute the transaction
 // using the gas from the simulation results
@@ -178,20 +177,6 @@ func (f Factory) WithFees(fees string) Factory {
 	return f
 }
 
-// WithTips returns a copy of the Factory with an updated tip.
-func (f Factory) WithTips(tip, tipper string) Factory {
-	parsedTips, err := sdk.ParseCoinsNormalized(tip)
-	if err != nil {
-		panic(err)
-	}
-
-	f.tip = &tx.Tip{
-		Tipper: tipper,
-		Amount: parsedTips,
-	}
-	return f
-}
-
 // WithGasPrices returns a copy of the Factory with updated gas prices.
 func (f Factory) WithGasPrices(gasPrices string) Factory {
 	parsedGasPrices, err := sdk.ParseDecCoins(gasPrices)
@@ -206,6 +191,13 @@ func (f Factory) WithGasPrices(gasPrices string) Factory {
 // WithKeybase returns a copy of the Factory with updated Keybase.
 func (f Factory) WithKeybase(keybase keyring.Keyring) Factory {
 	f.keybase = keybase
+	return f
+}
+
+// WithFromName returns a copy of the Factory with updated fromName
+// fromName will be use for building a simulation tx.
+func (f Factory) WithFromName(fromName string) Factory {
+	f.fromName = fromName
 	return f
 }
 
@@ -254,6 +246,12 @@ func (f Factory) WithSignMode(mode signing.SignMode) Factory {
 // WithTimeoutHeight returns a copy of the Factory with an updated timeout height.
 func (f Factory) WithTimeoutHeight(height uint64) Factory {
 	f.timeoutHeight = height
+	return f
+}
+
+// WithUnordered returns a copy of the Factory with an updated unordered field.
+func (f Factory) WithUnordered(v bool) Factory {
+	f.unordered = v
 	return f
 }
 
@@ -319,10 +317,10 @@ func (f Factory) WithExtensionOptions(extOpts ...*codectypes.Any) Factory {
 func (f Factory) BuildUnsignedTx(msgs ...sdk.Msg) (client.TxBuilder, error) {
 	if f.offline && f.generateOnly {
 		if f.chainID != "" {
-			return nil, fmt.Errorf("chain ID cannot be used when offline and generate-only flags are set")
+			return nil, errors.New("chain ID cannot be used when offline and generate-only flags are set")
 		}
 	} else if f.chainID == "" {
-		return nil, fmt.Errorf("chain ID required but not specified")
+		return nil, errors.New("chain ID required but not specified")
 	}
 
 	fees := f.fees
@@ -332,7 +330,9 @@ func (f Factory) BuildUnsignedTx(msgs ...sdk.Msg) (client.TxBuilder, error) {
 			return nil, errors.New("cannot provide both fees and gas prices")
 		}
 
-		glDec := math.LegacyNewDec(int64(f.gas))
+		// f.gas is a uint64 and we should convert to LegacyDec
+		// without the risk of under/overflow via uint64->int64.
+		glDec := math.LegacyNewDecFromBigInt(new(big.Int).SetUint64(f.gas))
 
 		// Derive the fees based on the provided gas prices, where
 		// fee = ceil(gasPrice * gasLimit).
@@ -400,7 +400,12 @@ func (f Factory) PrintUnsignedTx(clientCtx client.Context, msgs ...sdk.Msg) erro
 		return err
 	}
 
-	json, err := clientCtx.TxConfig.TxJSONEncoder()(unsignedTx.GetTx())
+	encoder := f.txConfig.TxJSONEncoder()
+	if encoder == nil {
+		return errors.New("cannot print unsigned tx: tx json encoder is nil")
+	}
+
+	json, err := encoder(unsignedTx.GetTx())
 	if err != nil {
 		return err
 	}
@@ -425,17 +430,20 @@ func (f Factory) BuildSimTx(msgs ...sdk.Msg) ([]byte, error) {
 	// Create an empty signature literal as the ante handler will populate with a
 	// sentinel pubkey.
 	sig := signing.SignatureV2{
-		PubKey: pk,
-		Data: &signing.SingleSignatureData{
-			SignMode: f.signMode,
-		},
+		PubKey:   pk,
+		Data:     f.getSimSignatureData(pk),
 		Sequence: f.Sequence(),
 	}
 	if err := txb.SetSignatures(sig); err != nil {
 		return nil, err
 	}
 
-	return f.txConfig.TxEncoder()(txb.GetTx())
+	encoder := f.txConfig.TxEncoder()
+	if encoder == nil {
+		return nil, fmt.Errorf("cannot simulate tx: tx encoder is nil")
+	}
+
+	return encoder(txb.GetTx())
 }
 
 // getSimPK gets the public key to use for building a simulation tx.
@@ -449,22 +457,39 @@ func (f Factory) getSimPK() (cryptotypes.PubKey, error) {
 		pk cryptotypes.PubKey = &secp256k1.PubKey{} // use default public key type
 	)
 
-	// Use the first element from the list of keys in order to generate a valid
-	// pubkey that supports multiple algorithms.
 	if f.simulateAndExecute && f.keybase != nil {
-		records, _ := f.keybase.List()
-		if len(records) == 0 {
-			return nil, errors.New("cannot build signature for simulation, key records slice is empty")
+		record, err := f.keybase.Key(f.fromName)
+		if err != nil {
+			return nil, err
 		}
 
-		// take the first record just for simulation purposes
-		pk, ok = records[0].PubKey.GetCachedValue().(cryptotypes.PubKey)
+		pk, ok = record.PubKey.GetCachedValue().(cryptotypes.PubKey)
 		if !ok {
 			return nil, errors.New("cannot build signature for simulation, failed to convert proto Any to public key")
 		}
 	}
 
 	return pk, nil
+}
+
+// getSimSignatureData based on the pubKey type gets the correct SignatureData type
+// to use for building a simulation tx.
+func (f Factory) getSimSignatureData(pk cryptotypes.PubKey) signing.SignatureData {
+	multisigPubKey, ok := pk.(*multisig.LegacyAminoPubKey)
+	if !ok {
+		return &signing.SingleSignatureData{SignMode: f.signMode}
+	}
+
+	multiSignatureData := make([]signing.SignatureData, 0, multisigPubKey.Threshold)
+	for i := uint32(0); i < multisigPubKey.Threshold; i++ {
+		multiSignatureData = append(multiSignatureData, &signing.SingleSignatureData{
+			SignMode: f.SignMode(),
+		})
+	}
+
+	return &signing.MultiSignatureData{
+		Signatures: multiSignatureData,
+	}
 }
 
 // Prepare ensures the account defined by ctx.GetFromAddress() exists and
@@ -478,11 +503,7 @@ func (f Factory) Prepare(clientCtx client.Context) (Factory, error) {
 	}
 
 	fc := f
-	from := clientCtx.GetFromAddress()
-
-	if err := fc.accountRetriever.EnsureExists(clientCtx, from); err != nil {
-		return fc, err
-	}
+	from := clientCtx.FromAddress
 
 	initNum, initSeq := fc.accountNumber, fc.sequence
 	if initNum == 0 || initSeq == 0 {

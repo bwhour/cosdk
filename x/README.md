@@ -1,8 +1,7 @@
 ---
 sidebar_position: 0
-slug : /modules
 ---
-
+<!-- markdown-link-check-disable -->
 # List of Modules
 
 Here are some production-grade modules that can be used in Cosmos SDK applications, along with their respective documentation:
@@ -17,10 +16,11 @@ Here are some production-grade modules that can be used in Cosmos SDK applicatio
 * [Governance](./gov/README.md) - On-chain proposals and voting.
 * [Mint](./mint/README.md) - Creation of new units of staking token.
 * [Params](./params/README.md) - Globally available parameter store.
+* [Protocolpool](./protocolpool/README.md) - Functionalities handling community pool funds.
 * [Slashing](./slashing/README.md) - Validator punishment mechanisms.
 * [Staking](./staking/README.md) - Proof-of-Stake layer for public blockchains.
 * [Upgrade](./upgrade/README.md) - Software upgrades handling and coordination.
-* [NFT](./nft/README.md) - NFT module implemented based on [ADR43](https://docs.cosmos.network/main/architecture/adr-043-nft-module.html).
+* [NFT](./nft/README.md) - NFT module implemented based on [ADR43](https://docs.cosmos.network/main/build/architecture/adr-043-nft-module).
 * [Consensus](./consensus/README.md) - Consensus module for modifying CometBFT's ABCI consensus params.
 * [Circuit](./circuit/README.md) - Circuit breaker module for pausing messages.
 * [Genutil](./genutil/README.md) - Genesis utilities for the Cosmos SDK.
@@ -39,4 +39,4 @@ The CosmWasm module enables smart contracts, learn more by going to their [docum
 
 ## EVM
 
-Read more about writing smart contracts with solidity at the official [`evm` documentation page](https://docs.evmos.org/modules/evm/).
+Read more about writing smart contracts with solidity at the official [`evm` documentation page](https://docs.evmos.org/).

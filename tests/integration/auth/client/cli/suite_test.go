@@ -13,10 +13,19 @@ import (
 
 	"cosmossdk.io/core/address"
 	"cosmossdk.io/math"
+	"cosmossdk.io/x/auth"
+	authcli "cosmossdk.io/x/auth/client/cli"
+	authtestutil "cosmossdk.io/x/auth/client/testutil"
+	"cosmossdk.io/x/bank"
+	banktypes "cosmossdk.io/x/bank/types"
+	"cosmossdk.io/x/gov"
+	govtestutil "cosmossdk.io/x/gov/client/testutil"
+	govtypes "cosmossdk.io/x/gov/types/v1beta1"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	kmultisig "github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
@@ -27,15 +36,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	testutilmod "github.com/cosmos/cosmos-sdk/types/module/testutil"
 	"github.com/cosmos/cosmos-sdk/types/tx"
-	"github.com/cosmos/cosmos-sdk/x/auth"
-	authcli "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
-	authtestutil "github.com/cosmos/cosmos-sdk/x/auth/client/testutil"
-	"github.com/cosmos/cosmos-sdk/x/bank"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
-	"github.com/cosmos/cosmos-sdk/x/gov"
-	govtestutil "github.com/cosmos/cosmos-sdk/x/gov/client/testutil"
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 )
 
 type CLITestSuite struct {
@@ -56,7 +57,7 @@ func TestCLITestSuite(t *testing.T) {
 }
 
 func (s *CLITestSuite) SetupSuite() {
-	s.encCfg = testutilmod.MakeTestEncodingConfig(auth.AppModuleBasic{}, bank.AppModuleBasic{}, gov.AppModuleBasic{})
+	s.encCfg = testutilmod.MakeTestEncodingConfig(codectestutil.CodecOptions{}, auth.AppModule{}, bank.AppModule{}, gov.AppModule{})
 	s.kr = keyring.NewInMemory(s.encCfg.Codec)
 	s.baseCtx = client.Context{}.
 		WithKeyring(s.kr).
@@ -114,7 +115,7 @@ func (s *CLITestSuite) TestCLIValidateSignatures() {
 		sdk.NewCoin("stake", math.NewInt(10)))
 
 	res, err := s.createBankMsg(s.clientCtx, s.val, sendTokens,
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly))
+		clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	// write  unsigned tx to file
@@ -151,7 +152,7 @@ func (s *CLITestSuite) TestCLISignBatch() {
 	)
 
 	generatedStd, err := s.createBankMsg(s.clientCtx, s.val,
-		sendTokens, fmt.Sprintf("--%s=true", flags.FlagGenerateOnly))
+		sendTokens, clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	outputFile := testutil.WriteToNewTempFile(s.T(), strings.Repeat(generatedStd.String(), 3))
@@ -171,6 +172,65 @@ func (s *CLITestSuite) TestCLISignBatch() {
 	s.Require().EqualError(err, "required flag(s) \"sequence\" not set")
 }
 
+func (s *CLITestSuite) TestCLISignBatchTotalFees() {
+	txCfg := s.clientCtx.TxConfig
+	s.clientCtx.HomeDir = strings.Replace(s.clientCtx.HomeDir, "simd", "simcli", 1)
+
+	testCases := []struct {
+		name            string
+		args            []string
+		numTransactions int
+		denom           string
+	}{
+		{
+			"Offline batch-sign one transaction",
+			[]string{"--offline", "--account-number", "1", "--sequence", "1", "--append"},
+			1,
+			"stake",
+		},
+		{
+			"Offline batch-sign two transactions",
+			[]string{"--offline", "--account-number", "1", "--sequence", "1", "--append"},
+			2,
+			"stake",
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			// Create multiple transactions and write them to separate files
+			sendTokens := sdk.NewCoin(tc.denom, sdk.TokensFromConsensusPower(10, sdk.DefaultPowerReduction))
+			expectedBatchedTotalFee := int64(0)
+			txFiles := make([]string, tc.numTransactions)
+			for i := 0; i < tc.numTransactions; i++ {
+				tx, err := s.createBankMsg(s.clientCtx, s.val,
+					sdk.NewCoins(sendTokens), clitestutil.TestTxConfig{GenOnly: true})
+				s.Require().NoError(err)
+				txFile := testutil.WriteToNewTempFile(s.T(), tx.String()+"\n")
+				defer txFile.Close()
+				txFiles[i] = txFile.Name()
+
+				unsignedTx, err := txCfg.TxJSONDecoder()(tx.Bytes())
+				s.Require().NoError(err)
+				txBuilder, err := txCfg.WrapTxBuilder(unsignedTx)
+				s.Require().NoError(err)
+				expectedBatchedTotalFee += txBuilder.GetTx().GetFee().AmountOf(tc.denom).Int64()
+			}
+
+			// Test batch sign
+			batchSignArgs := append([]string{fmt.Sprintf("--from=%s", s.val.String())}, append(txFiles, tc.args...)...)
+			signedTx, err := clitestutil.ExecTestCLICmd(s.clientCtx, authcli.GetSignBatchCommand(), batchSignArgs)
+			s.Require().NoError(err)
+			signedFinalTx, err := txCfg.TxJSONDecoder()(signedTx.Bytes())
+			s.Require().NoError(err)
+			txBuilder, err := txCfg.WrapTxBuilder(signedFinalTx)
+			s.Require().NoError(err)
+			finalTotalFee := txBuilder.GetTx().GetFee()
+			s.Require().Equal(expectedBatchedTotalFee, finalTotalFee.AmountOf(tc.denom).Int64())
+		})
+	}
+}
+
 func (s *CLITestSuite) TestCLIQueryTxCmdByHash() {
 	sendTokens := sdk.NewInt64Coin("stake", 10)
 
@@ -178,6 +238,7 @@ func (s *CLITestSuite) TestCLIQueryTxCmdByHash() {
 	out, err := s.createBankMsg(
 		s.clientCtx, s.val,
 		sdk.NewCoins(sendTokens),
+		clitestutil.TestTxConfig{},
 	)
 	s.Require().NoError(err)
 
@@ -336,7 +397,7 @@ func (s *CLITestSuite) TestCLISendGenerateSignAndBroadcast() {
 	sendTokens := sdk.NewCoin("stake", sdk.TokensFromConsensusPower(10, sdk.DefaultPowerReduction))
 
 	normalGeneratedTx, err := s.createBankMsg(s.clientCtx, s.val,
-		sdk.NewCoins(sendTokens), fmt.Sprintf("--%s=true", flags.FlagGenerateOnly))
+		sdk.NewCoins(sendTokens), clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	txCfg := s.clientCtx.TxConfig
@@ -353,8 +414,8 @@ func (s *CLITestSuite) TestCLISendGenerateSignAndBroadcast() {
 
 	// Test generate sendTx with --gas=$amount
 	limitedGasGeneratedTx, err := s.createBankMsg(s.clientCtx, s.val,
-		sdk.NewCoins(sendTokens), fmt.Sprintf("--gas=%d", 100),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly),
+		sdk.NewCoins(sendTokens),
+		clitestutil.TestTxConfig{GenOnly: true, Gas: 100},
 	)
 	s.Require().NoError(err)
 
@@ -370,8 +431,7 @@ func (s *CLITestSuite) TestCLISendGenerateSignAndBroadcast() {
 
 	// Test generate sendTx, estimate gas
 	finalGeneratedTx, err := s.createBankMsg(s.clientCtx, s.val,
-		sdk.NewCoins(sendTokens), fmt.Sprintf("--gas=%d", flags.DefaultGasLimit),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly))
+		sdk.NewCoins(sendTokens), clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	finalStdTx, err := txCfg.TxJSONDecoder()(finalGeneratedTx.Bytes())
@@ -454,23 +514,23 @@ func (s *CLITestSuite) TestCLIMultisignInsufficientCosigners() {
 		sdk.NewCoins(
 			sdk.NewInt64Coin("stake", 10),
 		),
+		clitestutil.TestTxConfig{},
 	)
 	s.Require().NoError(err)
 
-	// Generate multisig transaction.
-	multiGeneratedTx, err := clitestutil.MsgSendExec(
+	msgSend := &banktypes.MsgSend{
+		FromAddress: addr.String(),
+		ToAddress:   s.val.String(),
+		Amount:      sdk.NewCoins(sdk.NewInt64Coin("stake", 5)),
+	}
+
+	multiGeneratedTx, err := clitestutil.SubmitTestTx(
 		s.clientCtx,
+		msgSend,
 		addr,
-		s.val,
-		sdk.NewCoins(
-			sdk.NewInt64Coin("stake", 5),
-		),
-		s.ac,
-		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10))).String()),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly),
-	)
+		clitestutil.TestTxConfig{
+			GenOnly: true,
+		})
 	s.Require().NoError(err)
 
 	// Save tx to file
@@ -504,8 +564,10 @@ func (s *CLITestSuite) TestCLIEncode() {
 	normalGeneratedTx, err := s.createBankMsg(
 		s.clientCtx, s.val,
 		sdk.NewCoins(sendTokens),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly),
-		fmt.Sprintf("--%s=deadbeef", flags.FlagNote),
+		clitestutil.TestTxConfig{
+			GenOnly: true,
+			Memo:    "deadbeef",
+		},
 	)
 	s.Require().NoError(err)
 	savedTxFile := testutil.WriteToNewTempFile(s.T(), normalGeneratedTx.String())
@@ -546,20 +608,14 @@ func (s *CLITestSuite) TestCLIMultisignSortSignatures() {
 	addr, err := multisigRecord.GetAddress()
 	s.Require().NoError(err)
 
+	msgSend := &banktypes.MsgSend{
+		FromAddress: addr.String(),
+		ToAddress:   s.val.String(),
+		Amount:      sdk.NewCoins(sdk.NewInt64Coin("stake", 5)),
+	}
+
 	// Generate multisig transaction.
-	multiGeneratedTx, err := clitestutil.MsgSendExec(
-		s.clientCtx,
-		addr,
-		s.val,
-		sdk.NewCoins(
-			sdk.NewInt64Coin("stake", 5),
-		),
-		s.ac,
-		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10))).String()),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly),
-	)
+	multiGeneratedTx, err := clitestutil.SubmitTestTx(s.clientCtx, msgSend, addr, clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	// Save tx to file
@@ -620,20 +676,14 @@ func (s *CLITestSuite) TestSignWithMultisig() {
 	_, err = s.ac.StringToBytes(multisig)
 	s.Require().NoError(err)
 
+	msgSend := &banktypes.MsgSend{
+		FromAddress: s.val.String(),
+		ToAddress:   s.val.String(),
+		Amount:      sdk.NewCoins(sdk.NewInt64Coin("stake", 5)),
+	}
+
 	// Generate a transaction for testing --multisig with an address not in the keyring.
-	multisigTx, err := clitestutil.MsgSendExec(
-		s.clientCtx,
-		s.val,
-		s.val,
-		sdk.NewCoins(
-			sdk.NewInt64Coin("stake", 5),
-		),
-		s.ac,
-		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10))).String()),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly),
-	)
+	multisigTx, err := clitestutil.SubmitTestTx(s.clientCtx, msgSend, s.val, clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	// Save multi tx to file
@@ -662,20 +712,14 @@ func (s *CLITestSuite) TestCLIMultisign() {
 	addr, err := multisigRecord.GetAddress()
 	s.Require().NoError(err)
 
+	msgSend := &banktypes.MsgSend{
+		FromAddress: addr.String(),
+		ToAddress:   s.val.String(),
+		Amount:      sdk.NewCoins(sdk.NewInt64Coin("stake", 5)),
+	}
+
 	// Generate multisig transaction.
-	multiGeneratedTx, err := clitestutil.MsgSendExec(
-		s.clientCtx,
-		addr,
-		s.val,
-		sdk.NewCoins(
-			sdk.NewInt64Coin("stake", 5),
-		),
-		s.ac,
-		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10))).String()),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly),
-	)
+	multiGeneratedTx, err := clitestutil.SubmitTestTx(s.clientCtx, msgSend, addr, clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	// Save tx to file
@@ -734,22 +778,17 @@ func (s *CLITestSuite) TestSignBatchMultisig() {
 		s.clientCtx,
 		addr,
 		sdk.NewCoins(sendTokens),
+		clitestutil.TestTxConfig{},
 	)
 	s.Require().NoError(err)
 
-	generatedStd, err := clitestutil.MsgSendExec(
-		s.clientCtx,
-		addr,
-		s.val,
-		sdk.NewCoins(
-			sdk.NewCoin("stake", math.NewInt(1)),
-		),
-		s.ac,
-		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-		fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10))).String()),
-		fmt.Sprintf("--%s=true", flags.FlagGenerateOnly),
-	)
+	msgSend := &banktypes.MsgSend{
+		FromAddress: addr.String(),
+		ToAddress:   s.val.String(),
+		Amount:      sdk.NewCoins(sdk.NewInt64Coin("stake", 5)),
+	}
+
+	generatedStd, err := clitestutil.SubmitTestTx(s.clientCtx, msgSend, addr, clitestutil.TestTxConfig{GenOnly: true})
 	s.Require().NoError(err)
 
 	// Write the output to disk
@@ -802,11 +841,8 @@ func (s *CLITestSuite) TestGetBroadcastCommandWithoutOfflineFlag() {
 	// Create new file with tx
 	builder := txCfg.NewTxBuilder()
 	builder.SetGasLimit(200000)
-	from, err := s.ac.StringToBytes("cosmos1cxlt8kznps92fwu3j6npahx4mjfutydyene2qw")
-	s.Require().NoError(err)
-	to, err := s.ac.StringToBytes("cosmos1cxlt8kznps92fwu3j6npahx4mjfutydyene2qw")
-	s.Require().NoError(err)
-	err = builder.SetMsgs(banktypes.NewMsgSend(from, to, sdk.Coins{sdk.NewInt64Coin("stake", 10000)}))
+
+	err := builder.SetMsgs(banktypes.NewMsgSend("cosmos1cxlt8kznps92fwu3j6npahx4mjfutydyene2qw", "cosmos1cxlt8kznps92fwu3j6npahx4mjfutydyene2qw", sdk.Coins{sdk.NewInt64Coin("stake", 10000)}))
 	s.Require().NoError(err)
 	txContents, err := txCfg.TxJSONEncoder()(builder.GetTx())
 	s.Require().NoError(err)
@@ -826,12 +862,15 @@ func (s *CLITestSuite) TestGetBroadcastCommandWithoutOfflineFlag() {
 func (s *CLITestSuite) TestTxWithoutPublicKey() {
 	txCfg := s.clientCtx.TxConfig
 
+	valStr, err := s.ac.BytesToString(s.val)
+	s.Require().NoError(err)
+
 	// Create a txBuilder with an unsigned tx.
 	txBuilder := txCfg.NewTxBuilder()
-	msg := banktypes.NewMsgSend(s.val, s.val, sdk.NewCoins(
+	msg := banktypes.NewMsgSend(valStr, valStr, sdk.NewCoins(
 		sdk.NewCoin("Stake", math.NewInt(10)),
 	))
-	err := txBuilder.SetMsgs(msg)
+	err = txBuilder.SetMsgs(msg)
 	s.Require().NoError(err)
 	txBuilder.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("Stake", math.NewInt(150))))
 	txBuilder.SetGasLimit(testdata.NewTestGasLimit())
@@ -879,14 +918,21 @@ func (s *CLITestSuite) TestSignWithMultiSignersAminoJSON() {
 	val1Coin := sdk.NewCoin("test2token", math.NewInt(10))
 	_, _, addr1 := testdata.KeyTestPubAddr()
 
+	valStr, err := s.ac.BytesToString(val0)
+	s.Require().NoError(err)
+	val1Str, err := s.ac.BytesToString(val1)
+	s.Require().NoError(err)
+
+	addrStr, err := s.ac.BytesToString(addr1)
+	s.Require().NoError(err)
 	// Creating a tx with 2 msgs from 2 signers: val0 and val1.
 	// The validators need to sign with SIGN_MODE_LEGACY_AMINO_JSON,
 	// because DIRECT doesn't support multi signers via the CLI.
 	// Since we use amino, we don't need to pre-populate signer_infos.
 	txBuilder := s.clientCtx.TxConfig.NewTxBuilder()
-	err := txBuilder.SetMsgs(
-		banktypes.NewMsgSend(val0, addr1, sdk.NewCoins(val0Coin)),
-		banktypes.NewMsgSend(val1, addr1, sdk.NewCoins(val1Coin)),
+	err = txBuilder.SetMsgs(
+		banktypes.NewMsgSend(valStr, addrStr, sdk.NewCoins(val0Coin)),
+		banktypes.NewMsgSend(val1Str, addrStr, sdk.NewCoins(val1Coin)),
 	)
 	s.Require().NoError(err)
 	txBuilder.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10))))
@@ -937,6 +983,7 @@ func (s *CLITestSuite) TestSignWithMultiSignersAminoJSON() {
 }
 
 func (s *CLITestSuite) TestAuxSigner() {
+	s.T().Skip("re-enable this when we bring back sign mode aux client testing")
 	val0Coin := sdk.NewCoin("testtoken", math.NewInt(10))
 
 	testCases := []struct {
@@ -1008,7 +1055,7 @@ func (s *CLITestSuite) TestAuxToFeeWithTips() {
 	fee := sdk.NewCoin("stake", math.NewInt(1000))
 	tip := sdk.NewCoin("testtoken", math.NewInt(1000))
 
-	_, err = s.createBankMsg(s.clientCtx, tipper, sdk.NewCoins(tipperInitialBal))
+	_, err = s.createBankMsg(s.clientCtx, tipper, sdk.NewCoins(tipperInitialBal), clitestutil.TestTxConfig{})
 	require.NoError(err)
 
 	bal := s.getBalances(s.clientCtx, tipper, tip.Denom)
@@ -1208,13 +1255,6 @@ func (s *CLITestSuite) TestAuxToFeeWithTips() {
 				genTxFile := testutil.WriteToNewTempFile(s.T(), string(res.Bytes()))
 				defer genTxFile.Close()
 
-				// broadcast the tx
-				res, err = authtestutil.TxAuxToFeeExec(
-					s.clientCtx,
-					genTxFile.Name(),
-					tc.feePayerArgs...,
-				)
-
 				switch {
 				case tc.expectErrBroadCast:
 					require.Error(err)
@@ -1256,14 +1296,12 @@ func (s *CLITestSuite) getBalances(clientCtx client.Context, addr sdk.AccAddress
 	return startTokens
 }
 
-func (s *CLITestSuite) createBankMsg(clientCtx client.Context, toAddr sdk.AccAddress, amount sdk.Coins, extraFlags ...string) (testutil.BufferWriter, error) {
-	flags := []string{
-		fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-		fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-		fmt.Sprintf("--%s=%s", flags.FlagFees,
-			sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10))).String()),
+func (s *CLITestSuite) createBankMsg(clientCtx client.Context, toAddr sdk.AccAddress, amount sdk.Coins, cfg clitestutil.TestTxConfig) (testutil.BufferWriter, error) {
+	msgSend := &banktypes.MsgSend{
+		FromAddress: s.val.String(),
+		ToAddress:   toAddr.String(),
+		Amount:      amount,
 	}
 
-	flags = append(flags, extraFlags...)
-	return clitestutil.MsgSendExec(clientCtx, s.val, toAddr, amount, s.ac, flags...)
+	return clitestutil.SubmitTestTx(clientCtx, msgSend, s.val, cfg)
 }

@@ -4,25 +4,22 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/cockroachdb/errors"
 	abci "github.com/cometbft/cometbft/abci/types"
 	cryptoenc "github.com/cometbft/cometbft/crypto/encoding"
 	cmtprotocrypto "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	cmttypes "github.com/cometbft/cometbft/types"
 	protoio "github.com/cosmos/gogoproto/io"
 	"github.com/cosmos/gogoproto/proto"
 
-	"cosmossdk.io/math"
+	"cosmossdk.io/core/comet"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/mempool"
 )
-
-// VoteExtensionThreshold defines the total voting power % that must be
-// submitted in order for all vote extensions to be considered valid for a
-// given height.
-var VoteExtensionThreshold = math.LegacyNewDecWithPrec(667, 3)
 
 type (
 	// ValidatorStore defines the interface contract require for verifying vote
@@ -46,12 +43,23 @@ type (
 func ValidateVoteExtensions(
 	ctx sdk.Context,
 	valStore ValidatorStore,
-	currentHeight int64,
-	chainID string,
 	extCommit abci.ExtendedCommitInfo,
 ) error {
+	// Get values from context
 	cp := ctx.ConsensusParams()
-	extsEnabled := cp.Abci != nil && currentHeight >= cp.Abci.VoteExtensionsEnableHeight && cp.Abci.VoteExtensionsEnableHeight != 0
+	currentHeight := ctx.HeaderInfo().Height
+	chainID := ctx.HeaderInfo().ChainID
+	commitInfo := ctx.CometInfo().LastCommit
+
+	// Check that both extCommit + commit are ordered in accordance with vp/address.
+	if err := validateExtendedCommitAgainstLastCommit(extCommit, commitInfo); err != nil {
+		return err
+	}
+
+	// Start checking vote extensions only **after** the vote extensions enable
+	// height, because when `currentHeight == VoteExtensionsEnableHeight`
+	// PrepareProposal doesn't get any vote extensions in its request.
+	extsEnabled := cp.Abci != nil && currentHeight > cp.Abci.VoteExtensionsEnableHeight && cp.Abci.VoteExtensionsEnableHeight != 0
 	marshalDelimitedFn := func(msg proto.Message) ([]byte, error) {
 		var buf bytes.Buffer
 		if err := protoio.NewDelimitedWriter(&buf).WriteMsg(msg); err != nil {
@@ -93,6 +101,7 @@ func ValidateVoteExtensions(
 		}
 
 		valConsAddr := sdk.ConsAddress(vote.Validator.Address)
+
 		pubKeyProto, err := valStore.GetPubKeyByConsAddr(ctx, valConsAddr)
 		if err != nil {
 			return fmt.Errorf("failed to get validator %X public key: %w", valConsAddr, err)
@@ -122,10 +131,60 @@ func ValidateVoteExtensions(
 		sumVP += vote.Validator.Power
 	}
 
-	if totalVP > 0 {
-		percentSubmitted := math.LegacyNewDecFromInt(math.NewInt(sumVP)).Quo(math.LegacyNewDecFromInt(math.NewInt(totalVP)))
-		if percentSubmitted.LT(VoteExtensionThreshold) {
-			return fmt.Errorf("insufficient cumulative voting power received to verify vote extensions; got: %s, expected: >=%s", percentSubmitted, VoteExtensionThreshold)
+	// This check is probably unnecessary, but better safe than sorry.
+	if totalVP <= 0 {
+		return fmt.Errorf("total voting power must be positive, got: %d", totalVP)
+	}
+
+	// If the sum of the voting power has not reached (2/3 + 1) we need to error.
+	if requiredVP := ((totalVP * 2) / 3) + 1; sumVP < requiredVP {
+		return fmt.Errorf(
+			"insufficient cumulative voting power received to verify vote extensions; got: %d, expected: >=%d",
+			sumVP, requiredVP,
+		)
+	}
+	return nil
+}
+
+// validateExtendedCommitAgainstLastCommit validates an ExtendedCommitInfo against a LastCommit. Specifically,
+// it checks that the ExtendedCommit + LastCommit (for the same height), are consistent with each other + that
+// they are ordered correctly (by voting power) in accordance with
+// [comet](https://github.com/cometbft/cometbft/blob/4ce0277b35f31985bbf2c25d3806a184a4510010/types/validator_set.go#L784).
+func validateExtendedCommitAgainstLastCommit(ec abci.ExtendedCommitInfo, lc comet.CommitInfo) error {
+	// check that the rounds are the same
+	if ec.Round != lc.Round {
+		return fmt.Errorf("extended commit round %d does not match last commit round %d", ec.Round, lc.Round)
+	}
+
+	// check that the # of votes are the same
+	if len(ec.Votes) != len(lc.Votes) {
+		return fmt.Errorf("extended commit votes length %d does not match last commit votes length %d", len(ec.Votes), len(lc.Votes))
+	}
+
+	// check sort order of extended commit votes
+	if !slices.IsSortedFunc(ec.Votes, func(vote1, vote2 abci.ExtendedVoteInfo) int {
+		if vote1.Validator.Power == vote2.Validator.Power {
+			return bytes.Compare(vote1.Validator.Address, vote2.Validator.Address) // addresses sorted in ascending order (used to break vp conflicts)
+		}
+		return -int(vote1.Validator.Power - vote2.Validator.Power) // vp sorted in descending order
+	}) {
+		return fmt.Errorf("extended commit votes are not sorted by voting power")
+	}
+
+	addressCache := make(map[string]struct{}, len(ec.Votes))
+	// check consistency between LastCommit and ExtendedCommit
+	for i, vote := range ec.Votes {
+		// cache addresses to check for duplicates
+		if _, ok := addressCache[string(vote.Validator.Address)]; ok {
+			return fmt.Errorf("extended commit vote address %X is duplicated", vote.Validator.Address)
+		}
+		addressCache[string(vote.Validator.Address)] = struct{}{}
+
+		if !bytes.Equal(vote.Validator.Address, lc.Votes[i].Validator.Address) {
+			return fmt.Errorf("extended commit vote address %X does not match last commit vote address %X", vote.Validator.Address, lc.Votes[i].Validator.Address)
+		}
+		if vote.Validator.Power != lc.Votes[i].Validator.Power {
+			return fmt.Errorf("extended commit vote power %d does not match last commit vote power %d", vote.Validator.Power, lc.Votes[i].Validator.Power)
 		}
 	}
 
@@ -139,21 +198,32 @@ type (
 	ProposalTxVerifier interface {
 		PrepareProposalVerifyTx(tx sdk.Tx) ([]byte, error)
 		ProcessProposalVerifyTx(txBz []byte) (sdk.Tx, error)
+		TxDecode(txBz []byte) (sdk.Tx, error)
+		TxEncode(tx sdk.Tx) ([]byte, error)
 	}
 
 	// DefaultProposalHandler defines the default ABCI PrepareProposal and
 	// ProcessProposal handlers.
 	DefaultProposalHandler struct {
-		mempool    mempool.Mempool
-		txVerifier ProposalTxVerifier
+		mempool          mempool.Mempool
+		txVerifier       ProposalTxVerifier
+		txSelector       TxSelector
+		signerExtAdapter mempool.SignerExtractionAdapter
 	}
 )
 
-func NewDefaultProposalHandler(mp mempool.Mempool, txVerifier ProposalTxVerifier) DefaultProposalHandler {
-	return DefaultProposalHandler{
-		mempool:    mp,
-		txVerifier: txVerifier,
+func NewDefaultProposalHandler(mp mempool.Mempool, txVerifier ProposalTxVerifier) *DefaultProposalHandler {
+	return &DefaultProposalHandler{
+		mempool:          mp,
+		txVerifier:       txVerifier,
+		txSelector:       NewDefaultTxSelector(),
+		signerExtAdapter: mempool.NewDefaultSignerExtractionAdapter(),
 	}
+}
+
+// SetTxSelector sets the TxSelector function on the DefaultProposalHandler.
+func (h *DefaultProposalHandler) SetTxSelector(ts TxSelector) {
+	h.txSelector = ts
 }
 
 // PrepareProposalHandler returns the default implementation for processing an
@@ -176,77 +246,109 @@ func NewDefaultProposalHandler(mp mempool.Mempool, txVerifier ProposalTxVerifier
 // - If no mempool is set or if the mempool is a no-op mempool, the transactions
 // requested from CometBFT will simply be returned, which, by default, are in
 // FIFO order.
-func (h DefaultProposalHandler) PrepareProposalHandler() sdk.PrepareProposalHandler {
+func (h *DefaultProposalHandler) PrepareProposalHandler() sdk.PrepareProposalHandler {
 	return func(ctx sdk.Context, req *abci.RequestPrepareProposal) (*abci.ResponsePrepareProposal, error) {
+		var maxBlockGas uint64
+		if b := ctx.ConsensusParams().Block; b != nil {
+			maxBlockGas = uint64(b.MaxGas)
+		}
+
+		defer h.txSelector.Clear()
+
 		// If the mempool is nil or NoOp we simply return the transactions
 		// requested from CometBFT, which, by default, should be in FIFO order.
+		//
+		// Note, we still need to ensure the transactions returned respect req.MaxTxBytes.
 		_, isNoOp := h.mempool.(mempool.NoOpMempool)
 		if h.mempool == nil || isNoOp {
-			return &abci.ResponsePrepareProposal{Txs: req.Txs}, nil
-		}
+			for _, txBz := range req.Txs {
+				tx, err := h.txVerifier.TxDecode(txBz)
+				if err != nil {
+					return nil, err
+				}
 
-		var maxBlockGas int64
-		if b := ctx.ConsensusParams().Block; b != nil {
-			maxBlockGas = b.MaxGas
-		}
+				stop := h.txSelector.SelectTxForProposal(ctx, uint64(req.MaxTxBytes), maxBlockGas, tx, txBz)
+				if stop {
+					break
+				}
+			}
 
-		var (
-			selectedTxs  [][]byte
-			totalTxBytes int64
-			totalTxGas   uint64
-		)
+			return &abci.ResponsePrepareProposal{Txs: h.txSelector.SelectedTxs(ctx)}, nil
+		}
 
 		iterator := h.mempool.Select(ctx, req.Txs)
-
+		selectedTxsSignersSeqs := make(map[string]uint64)
+		var selectedTxsNums int
 		for iterator != nil {
 			memTx := iterator.Tx()
+			signerData, err := h.signerExtAdapter.GetSigners(memTx)
+			if err != nil {
+				return nil, err
+			}
+
+			// If the signers aren't in selectedTxsSignersSeqs then we haven't seen them before
+			// so we add them and continue given that we don't need to check the sequence.
+			shouldAdd := true
+			txSignersSeqs := make(map[string]uint64)
+			for _, signer := range signerData {
+				seq, ok := selectedTxsSignersSeqs[signer.Signer.String()]
+				if !ok {
+					txSignersSeqs[signer.Signer.String()] = signer.Sequence
+					continue
+				}
+
+				// If we have seen this signer before in this block, we must make
+				// sure that the current sequence is seq+1; otherwise is invalid
+				// and we skip it.
+				if seq+1 != signer.Sequence {
+					shouldAdd = false
+					break
+				}
+				txSignersSeqs[signer.Signer.String()] = signer.Sequence
+			}
+			if !shouldAdd {
+				iterator = iterator.Next()
+				continue
+			}
 
 			// NOTE: Since transaction verification was already executed in CheckTx,
 			// which calls mempool.Insert, in theory everything in the pool should be
 			// valid. But some mempool implementations may insert invalid txs, so we
 			// check again.
-			bz, err := h.txVerifier.PrepareProposalVerifyTx(memTx)
+			txBz, err := h.txVerifier.PrepareProposalVerifyTx(memTx)
 			if err != nil {
 				err := h.mempool.Remove(memTx)
 				if err != nil && !errors.Is(err, mempool.ErrTxNotFound) {
 					return nil, err
 				}
 			} else {
-				var txGasLimit uint64
-				txSize := int64(len(bz))
-
-				gasTx, ok := memTx.(GasTx)
-				if ok {
-					txGasLimit = gasTx.GetGas()
-				}
-
-				// only add the transaction to the proposal if we have enough capacity
-				if (txSize + totalTxBytes) < req.MaxTxBytes {
-					// If there is a max block gas limit, add the tx only if the limit has
-					// not been met.
-					if maxBlockGas > 0 {
-						if (txGasLimit + totalTxGas) <= uint64(maxBlockGas) {
-							totalTxGas += txGasLimit
-							totalTxBytes += txSize
-							selectedTxs = append(selectedTxs, bz)
-						}
-					} else {
-						totalTxBytes += txSize
-						selectedTxs = append(selectedTxs, bz)
-					}
-				}
-
-				// Check if we've reached capacity. If so, we cannot select any more
-				// transactions.
-				if totalTxBytes >= req.MaxTxBytes || (maxBlockGas > 0 && (totalTxGas >= uint64(maxBlockGas))) {
+				stop := h.txSelector.SelectTxForProposal(ctx, uint64(req.MaxTxBytes), maxBlockGas, memTx, txBz)
+				if stop {
 					break
 				}
+
+				txsLen := len(h.txSelector.SelectedTxs(ctx))
+				for sender, seq := range txSignersSeqs {
+					// If txsLen != selectedTxsNums is true, it means that we've
+					// added a new tx to the selected txs, so we need to update
+					// the sequence of the sender.
+					if txsLen != selectedTxsNums {
+						selectedTxsSignersSeqs[sender] = seq
+					} else if _, ok := selectedTxsSignersSeqs[sender]; !ok {
+						// The transaction hasn't been added but it passed the
+						// verification, so we know that the sequence is correct.
+						// So we set this sender's sequence to seq-1, in order
+						// to avoid unnecessary calls to PrepareProposalVerifyTx.
+						selectedTxsSignersSeqs[sender] = seq - 1
+					}
+				}
+				selectedTxsNums = txsLen
 			}
 
 			iterator = iterator.Next()
 		}
 
-		return &abci.ResponsePrepareProposal{Txs: selectedTxs}, nil
+		return &abci.ResponsePrepareProposal{Txs: h.txSelector.SelectedTxs(ctx)}, nil
 	}
 }
 
@@ -261,7 +363,7 @@ func (h DefaultProposalHandler) PrepareProposalHandler() sdk.PrepareProposalHand
 // DefaultPrepareProposal. It is very important that the same validation logic
 // is used in both steps, and applications must ensure that this is the case in
 // non-default handlers.
-func (h DefaultProposalHandler) ProcessProposalHandler() sdk.ProcessProposalHandler {
+func (h *DefaultProposalHandler) ProcessProposalHandler() sdk.ProcessProposalHandler {
 	// If the mempool is nil or NoOp we simply return ACCEPT,
 	// because PrepareProposal may have included txs that could fail verification.
 	_, isNoOp := h.mempool.(mempool.NoOpMempool)
@@ -329,4 +431,74 @@ func NoOpVerifyVoteExtensionHandler() sdk.VerifyVoteExtensionHandler {
 	return func(_ sdk.Context, _ *abci.RequestVerifyVoteExtension) (*abci.ResponseVerifyVoteExtension, error) {
 		return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}, nil
 	}
+}
+
+// TxSelector defines a helper type that assists in selecting transactions during
+// mempool transaction selection in PrepareProposal. It keeps track of the total
+// number of bytes and total gas of the selected transactions. It also keeps
+// track of the selected transactions themselves.
+type TxSelector interface {
+	// SelectedTxs should return a copy of the selected transactions.
+	SelectedTxs(ctx context.Context) [][]byte
+
+	// Clear should clear the TxSelector, nulling out all relevant fields.
+	Clear()
+
+	// SelectTxForProposal should attempt to select a transaction for inclusion in
+	// a proposal based on inclusion criteria defined by the TxSelector. It must
+	// return <true> if the caller should halt the transaction selection loop
+	// (typically over a mempool) or <false> otherwise.
+	SelectTxForProposal(ctx context.Context, maxTxBytes, maxBlockGas uint64, memTx sdk.Tx, txBz []byte) bool
+}
+
+type defaultTxSelector struct {
+	totalTxBytes uint64
+	totalTxGas   uint64
+	selectedTxs  [][]byte
+}
+
+func NewDefaultTxSelector() TxSelector {
+	return &defaultTxSelector{}
+}
+
+func (ts *defaultTxSelector) SelectedTxs(_ context.Context) [][]byte {
+	txs := make([][]byte, len(ts.selectedTxs))
+	copy(txs, ts.selectedTxs)
+	return txs
+}
+
+func (ts *defaultTxSelector) Clear() {
+	ts.totalTxBytes = 0
+	ts.totalTxGas = 0
+	ts.selectedTxs = nil
+}
+
+func (ts *defaultTxSelector) SelectTxForProposal(_ context.Context, maxTxBytes, maxBlockGas uint64, memTx sdk.Tx, txBz []byte) bool {
+	txSize := uint64(cmttypes.ComputeProtoSizeForTxs([]cmttypes.Tx{txBz}))
+
+	var txGasLimit uint64
+	if memTx != nil {
+		if gasTx, ok := memTx.(GasTx); ok {
+			txGasLimit = gasTx.GetGas()
+		}
+	}
+
+	// only add the transaction to the proposal if we have enough capacity
+	if (txSize + ts.totalTxBytes) <= maxTxBytes {
+		// If there is a max block gas limit, add the tx only if the limit has
+		// not been met.
+		if maxBlockGas > 0 {
+			if (txGasLimit + ts.totalTxGas) <= maxBlockGas {
+				ts.totalTxGas += txGasLimit
+				ts.totalTxBytes += txSize
+				ts.selectedTxs = append(ts.selectedTxs, txBz)
+			}
+		} else {
+			ts.totalTxBytes += txSize
+			ts.selectedTxs = append(ts.selectedTxs, txBz)
+		}
+	}
+
+	// check if we've reached capacity; if so, we cannot select any more transactions
+	return ts.totalTxBytes >= maxTxBytes || (maxBlockGas > 0 && (ts.totalTxGas >= maxBlockGas))
 }

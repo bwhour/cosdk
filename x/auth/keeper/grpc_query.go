@@ -9,10 +9,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"cosmossdk.io/x/auth/types"
+
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
-	"github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
 var _ types.QueryServer = queryServer{}
@@ -36,7 +37,7 @@ func (s queryServer) AccountAddressByID(ctx context.Context, req *types.QueryAcc
 
 	address, err := s.k.Accounts.Indexes.Number.MatchExact(ctx, accID)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "account address not found with account number %d", req.Id)
+		return nil, status.Errorf(codes.NotFound, "account address not found with account number %d", accID)
 	}
 
 	addr, err := s.k.addressCodec.BytesToString(address)
@@ -92,23 +93,20 @@ func (s queryServer) Account(ctx context.Context, req *types.QueryAccountRequest
 }
 
 // Params returns parameters of auth module
-func (s queryServer) Params(c context.Context, req *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
+func (s queryServer) Params(ctx context.Context, req *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-	ctx := sdk.UnwrapSDKContext(c)
 	params := s.k.GetParams(ctx)
 
 	return &types.QueryParamsResponse{Params: params}, nil
 }
 
 // ModuleAccounts returns all the existing Module Accounts
-func (s queryServer) ModuleAccounts(c context.Context, req *types.QueryModuleAccountsRequest) (*types.QueryModuleAccountsResponse, error) {
+func (s queryServer) ModuleAccounts(ctx context.Context, req *types.QueryModuleAccountsRequest) (*types.QueryModuleAccountsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-
-	ctx := sdk.UnwrapSDKContext(c)
 
 	// For deterministic output, sort the permAddrs by module name.
 	sortedPermAddrs := make([]string, 0, len(s.k.permAddrs))
@@ -135,7 +133,7 @@ func (s queryServer) ModuleAccounts(c context.Context, req *types.QueryModuleAcc
 }
 
 // ModuleAccountByName returns module account by module name
-func (s queryServer) ModuleAccountByName(c context.Context, req *types.QueryModuleAccountByNameRequest) (*types.QueryModuleAccountByNameResponse, error) {
+func (s queryServer) ModuleAccountByName(ctx context.Context, req *types.QueryModuleAccountByNameRequest) (*types.QueryModuleAccountByNameResponse, error) {
 	if req == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "empty request")
 	}
@@ -144,7 +142,6 @@ func (s queryServer) ModuleAccountByName(c context.Context, req *types.QueryModu
 		return nil, status.Error(codes.InvalidArgument, "module name is empty")
 	}
 
-	ctx := sdk.UnwrapSDKContext(c)
 	moduleName := req.Name
 
 	account := s.k.GetModuleAccount(ctx, moduleName)

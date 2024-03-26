@@ -4,21 +4,19 @@ import (
 	"context"
 	"testing"
 
-	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/stretchr/testify/require"
 
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/auth"
 	"cosmossdk.io/x/circuit/ante"
 	cbtypes "cosmossdk.io/x/circuit/types"
 
 	"github.com/cosmos/cosmos-sdk/client"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/testutil"
-	clitestutil "github.com/cosmos/cosmos-sdk/testutil/cli"
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	"github.com/cosmos/cosmos-sdk/x/auth"
-	"github.com/cosmos/cosmos-sdk/x/bank"
 )
 
 type fixture struct {
@@ -40,10 +38,9 @@ func (m MockCircuitBreaker) IsAllowed(ctx context.Context, typeURL string) (bool
 func initFixture(t *testing.T) *fixture {
 	t.Helper()
 	mockStoreKey := storetypes.NewKVStoreKey("test")
-	encCfg := moduletestutil.MakeTestEncodingConfig(auth.AppModuleBasic{}, bank.AppModuleBasic{})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, auth.AppModule{})
 	mockclientCtx := client.Context{}.
-		WithTxConfig(encCfg.TxConfig).
-		WithClient(clitestutil.NewMockCometRPC(abci.ResponseQuery{}))
+		WithTxConfig(encCfg.TxConfig)
 
 	return &fixture{
 		ctx:           testutil.DefaultContextWithDB(t, mockStoreKey, storetypes.NewTransientStoreKey("transient_test")).Ctx,
@@ -65,8 +62,8 @@ func TestCircuitBreakerDecorator(t *testing.T) {
 		allowed bool
 	}{
 		{msg: &cbtypes.MsgAuthorizeCircuitBreaker{
-			Grantee: "cosmos1fghij",
-			Granter: "cosmos1abcde",
+			Grantee: "cosmos139f7kncmglres2nf3h4hc4tade85ekfr8sulz5",
+			Granter: "cosmos16wfryel63g7axeamw68630wglalcnk3l0zuadc",
 		}, allowed: true},
 		{msg: testdata.NewTestMsg(addr1), allowed: false},
 	}

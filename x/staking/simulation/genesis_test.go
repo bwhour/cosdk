@@ -8,15 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	sdkmath "cosmossdk.io/math"
+	"cosmossdk.io/x/staking/simulation"
+	"cosmossdk.io/x/staking/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
-	"github.com/cosmos/cosmos-sdk/x/staking/simulation"
-	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // TestRandomizedGenState tests the normal scenario of applying RandomizedGenState.
@@ -25,19 +26,22 @@ func TestRandomizedGenState(t *testing.T) {
 	interfaceRegistry := codectypes.NewInterfaceRegistry()
 	cryptocodec.RegisterInterfaces(interfaceRegistry)
 	cdc := codec.NewProtoCodec(interfaceRegistry)
+	cdcOpts := codectestutil.CodecOptions{}
 
 	s := rand.NewSource(1)
 	r := rand.New(s)
 
 	simState := module.SimulationState{
-		AppParams:    make(simtypes.AppParams),
-		Cdc:          cdc,
-		Rand:         r,
-		NumBonded:    3,
-		BondDenom:    sdk.DefaultBondDenom,
-		Accounts:     simtypes.RandomAccounts(r, 3),
-		InitialStake: sdkmath.NewInt(1000),
-		GenState:     make(map[string]json.RawMessage),
+		AppParams:      make(simtypes.AppParams),
+		Cdc:            cdc,
+		AddressCodec:   cdcOpts.GetAddressCodec(),
+		ValidatorCodec: cdcOpts.GetValidatorCodec(),
+		Rand:           r,
+		NumBonded:      3,
+		BondDenom:      sdk.DefaultBondDenom,
+		Accounts:       simtypes.RandomAccounts(r, 3),
+		InitialStake:   sdkmath.NewInt(1000),
+		GenState:       make(map[string]json.RawMessage),
 	}
 
 	simulation.RandomizedGenState(&simState)
@@ -64,9 +68,9 @@ func TestRandomizedGenState(t *testing.T) {
 	require.Equal(t, "BOND_STATUS_UNBONDED", stakingGenesis.Validators[2].Status.String())
 	require.Equal(t, "1000", stakingGenesis.Validators[2].Tokens.String())
 	require.Equal(t, "1000.000000000000000000", stakingGenesis.Validators[2].DelegatorShares.String())
-	require.Equal(t, "0.292059246265731326", stakingGenesis.Validators[2].Commission.CommissionRates.Rate.String())
-	require.Equal(t, "0.330000000000000000", stakingGenesis.Validators[2].Commission.CommissionRates.MaxRate.String())
-	require.Equal(t, "0.038337453731274481", stakingGenesis.Validators[2].Commission.CommissionRates.MaxChangeRate.String())
+	require.Equal(t, "0.760000000000000000", stakingGenesis.Validators[2].Commission.CommissionRates.Rate.String())
+	require.Equal(t, "0.760000000000000000", stakingGenesis.Validators[2].Commission.CommissionRates.MaxRate.String())
+	require.Equal(t, "0.312739151653465930", stakingGenesis.Validators[2].Commission.CommissionRates.MaxChangeRate.String())
 	require.Equal(t, "1", stakingGenesis.Validators[2].MinSelfDelegation.String())
 }
 

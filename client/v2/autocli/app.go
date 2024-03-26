@@ -1,7 +1,6 @@
 package autocli
 
 import (
-	"github.com/cosmos/gogoproto/proto"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -9,14 +8,11 @@ import (
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
 	"cosmossdk.io/client/v2/autocli/flag"
 	"cosmossdk.io/client/v2/autocli/keyring"
-	"cosmossdk.io/core/address"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/depinject"
-	"cosmossdk.io/log"
 
 	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	sdkflags "github.com/cosmos/cosmos-sdk/client/flags"
 )
 
 // AppOptions are autocli options for an app. These options can be built via depinject based on an app config. Ex:
@@ -30,9 +26,6 @@ import (
 type AppOptions struct {
 	depinject.In
 
-	// Logger is the logger to use for client/v2.
-	Logger log.Logger
-
 	// Modules are the AppModule implementations for the modules in the app.
 	Modules map[string]appmodule.AppModule
 
@@ -42,13 +35,11 @@ type AppOptions struct {
 	// module or need to be improved.
 	ModuleOptions map[string]*autocliv1.ModuleOptions `optional:"true"`
 
-	// AddressCodec is the address codec to use for the app.
-	AddressCodec          address.Codec
-	ValidatorAddressCodec runtime.ValidatorAddressCodec
-	ConsensusAddressCodec runtime.ConsensusAddressCodec
-
 	// Keyring is the keyring to use for client/v2.
 	Keyring keyring.Keyring `optional:"true"`
+
+	// ClientCtx contains the necessary information needed to execute the commands.
+	ClientCtx client.Context
 }
 
 // EnhanceRootCommand enhances the provided root command with autocli AppOptions,
@@ -68,27 +59,26 @@ type AppOptions struct {
 //	err = autoCliOpts.EnhanceRootCommand(rootCmd)
 func (appOptions AppOptions) EnhanceRootCommand(rootCmd *cobra.Command) error {
 	builder := &Builder{
-		Logger: appOptions.Logger,
 		Builder: flag.Builder{
 			TypeResolver:          protoregistry.GlobalTypes,
-			FileResolver:          proto.HybridResolver,
-			AddressCodec:          appOptions.AddressCodec,
-			ValidatorAddressCodec: appOptions.ValidatorAddressCodec,
-			ConsensusAddressCodec: appOptions.ConsensusAddressCodec,
+			FileResolver:          appOptions.ClientCtx.InterfaceRegistry,
 			Keyring:               appOptions.Keyring,
+			AddressCodec:          appOptions.ClientCtx.AddressCodec,
+			ValidatorAddressCodec: appOptions.ClientCtx.ValidatorAddressCodec,
+			ConsensusAddressCodec: appOptions.ClientCtx.ConsensusAddressCodec,
 		},
 		GetClientConn: func(cmd *cobra.Command) (grpc.ClientConnInterface, error) {
 			return client.GetClientQueryContext(cmd)
 		},
-		AddQueryConnFlags: flags.AddQueryFlagsToCmd,
-		AddTxConnFlags:    flags.AddTxFlagsToCmd,
+		AddQueryConnFlags: sdkflags.AddQueryFlagsToCmd,
+		AddTxConnFlags:    sdkflags.AddTxFlagsToCmd,
 	}
 
 	return appOptions.EnhanceRootCommandWithBuilder(rootCmd, builder)
 }
 
 func (appOptions AppOptions) EnhanceRootCommandWithBuilder(rootCmd *cobra.Command, builder *Builder) error {
-	if err := builder.Validate(); err != nil {
+	if err := builder.ValidateAndComplete(); err != nil {
 		return err
 	}
 
@@ -116,7 +106,7 @@ func (appOptions AppOptions) EnhanceRootCommandWithBuilder(rootCmd *cobra.Comman
 			return err
 		}
 	} else {
-		queryCmd, err := builder.BuildQueryCommand(appOptions, customQueryCmds)
+		queryCmd, err := builder.BuildQueryCommand(rootCmd.Context(), appOptions, customQueryCmds)
 		if err != nil {
 			return err
 		}
@@ -129,7 +119,7 @@ func (appOptions AppOptions) EnhanceRootCommandWithBuilder(rootCmd *cobra.Comman
 			return err
 		}
 	} else {
-		subCmd, err := builder.BuildMsgCommand(appOptions, customMsgCmds)
+		subCmd, err := builder.BuildMsgCommand(rootCmd.Context(), appOptions, customMsgCmds)
 		if err != nil {
 			return err
 		}

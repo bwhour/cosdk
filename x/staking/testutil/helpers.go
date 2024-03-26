@@ -7,12 +7,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"cosmossdk.io/core/header"
 	"cosmossdk.io/math"
+	"cosmossdk.io/x/staking/keeper"
+	stakingtypes "cosmossdk.io/x/staking/types"
 
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // Helper is a structure which wraps the staking message server
@@ -52,7 +53,9 @@ func (sh *Helper) CreateValidatorWithValPower(addr sdk.ValAddress, pk cryptotype
 // CreateValidatorMsg returns a message used to create validator in this service.
 func (sh *Helper) CreateValidatorMsg(addr sdk.ValAddress, pk cryptotypes.PubKey, stakeAmount math.Int) *stakingtypes.MsgCreateValidator {
 	coin := sdk.NewCoin(sh.Denom, stakeAmount)
-	msg, err := stakingtypes.NewMsgCreateValidator(addr.String(), pk, coin, stakingtypes.Description{}, sh.Commission, math.OneInt())
+	address, err := sh.k.ValidatorAddressCodec().BytesToString(addr)
+	require.NoError(sh.t, err)
+	msg, err := stakingtypes.NewMsgCreateValidator(address, pk, coin, stakingtypes.Description{}, sh.Commission, math.OneInt())
 	require.NoError(sh.t, err)
 	return msg
 }
@@ -63,7 +66,9 @@ func (sh *Helper) CreateValidatorWithMsg(ctx context.Context, msg *stakingtypes.
 }
 
 func (sh *Helper) createValidator(addr sdk.ValAddress, pk cryptotypes.PubKey, coin sdk.Coin, ok bool) {
-	msg, err := stakingtypes.NewMsgCreateValidator(addr.String(), pk, coin, stakingtypes.Description{Moniker: "TestValidator"}, sh.Commission, math.OneInt())
+	address, err := sh.k.ValidatorAddressCodec().BytesToString(addr)
+	require.NoError(sh.t, err)
+	msg, err := stakingtypes.NewMsgCreateValidator(address, pk, coin, stakingtypes.Description{Moniker: "TestValidator"}, sh.Commission, math.OneInt())
 	require.NoError(sh.t, err)
 	res, err := sh.msgSrvr.CreateValidator(sh.Ctx, msg)
 	if ok {
@@ -76,27 +81,27 @@ func (sh *Helper) createValidator(addr sdk.ValAddress, pk cryptotypes.PubKey, co
 }
 
 // Delegate calls staking module staking module `MsgServer/Delegate` to delegate stake for a validator
-func (sh *Helper) Delegate(delegator sdk.AccAddress, val sdk.ValAddress, amount math.Int) {
+func (sh *Helper) Delegate(delegator, val string, amount math.Int) {
 	coin := sdk.NewCoin(sh.Denom, amount)
-	msg := stakingtypes.NewMsgDelegate(delegator.String(), val.String(), coin)
+	msg := stakingtypes.NewMsgDelegate(delegator, val, coin)
 	res, err := sh.msgSrvr.Delegate(sh.Ctx, msg)
 	require.NoError(sh.t, err)
 	require.NotNil(sh.t, res)
 }
 
 // DelegateWithPower calls staking module `MsgServer/Delegate` to delegate stake for a validator
-func (sh *Helper) DelegateWithPower(delegator sdk.AccAddress, val sdk.ValAddress, power int64) {
+func (sh *Helper) DelegateWithPower(delegator, val string, power int64) {
 	coin := sdk.NewCoin(sh.Denom, sh.k.TokensFromConsensusPower(sh.Ctx, power))
-	msg := stakingtypes.NewMsgDelegate(delegator.String(), val.String(), coin)
+	msg := stakingtypes.NewMsgDelegate(delegator, val, coin)
 	res, err := sh.msgSrvr.Delegate(sh.Ctx, msg)
 	require.NoError(sh.t, err)
 	require.NotNil(sh.t, res)
 }
 
 // Undelegate calls staking module `MsgServer/Undelegate` to unbound some stake from a validator.
-func (sh *Helper) Undelegate(delegator sdk.AccAddress, val sdk.ValAddress, amount math.Int, ok bool) {
+func (sh *Helper) Undelegate(delegator, val string, amount math.Int, ok bool) {
 	unbondAmt := sdk.NewCoin(sh.Denom, amount)
-	msg := stakingtypes.NewMsgUndelegate(delegator.String(), val.String(), unbondAmt)
+	msg := stakingtypes.NewMsgUndelegate(delegator, val, unbondAmt)
 	res, err := sh.msgSrvr.Undelegate(sh.Ctx, msg)
 	if ok {
 		require.NoError(sh.t, err)
@@ -121,7 +126,7 @@ func (sh *Helper) CheckValidator(addr sdk.ValAddress, status stakingtypes.BondSt
 
 // TurnBlock calls EndBlocker and updates the block time
 func (sh *Helper) TurnBlock(newTime time.Time) sdk.Context {
-	sh.Ctx = sh.Ctx.WithBlockTime(newTime)
+	sh.Ctx = sh.Ctx.WithHeaderInfo(header.Info{Time: newTime})
 	_, err := sh.k.EndBlocker(sh.Ctx)
 	require.NoError(sh.t, err)
 	return sh.Ctx
@@ -130,7 +135,7 @@ func (sh *Helper) TurnBlock(newTime time.Time) sdk.Context {
 // TurnBlockTimeDiff calls EndBlocker and updates the block time by adding the
 // duration to the current block time
 func (sh *Helper) TurnBlockTimeDiff(diff time.Duration) sdk.Context {
-	sh.Ctx = sh.Ctx.WithBlockTime(sh.Ctx.BlockHeader().Time.Add(diff))
+	sh.Ctx = sh.Ctx.WithHeaderInfo(header.Info{Time: sh.Ctx.HeaderInfo().Time.Add(diff)})
 	_, err := sh.k.EndBlocker(sh.Ctx)
 	require.NoError(sh.t, err)
 	return sh.Ctx

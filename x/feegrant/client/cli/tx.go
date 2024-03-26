@@ -1,13 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"cosmossdk.io/core/address"
 	"cosmossdk.io/x/feegrant"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -27,7 +27,7 @@ const (
 )
 
 // GetTxCmd returns the transaction commands for feegrant module
-func GetTxCmd(ac address.Codec) *cobra.Command {
+func GetTxCmd() *cobra.Command {
 	feegrantTxCmd := &cobra.Command{
 		Use:                        feegrant.ModuleName,
 		Short:                      "Feegrant transactions sub-commands",
@@ -38,18 +38,19 @@ func GetTxCmd(ac address.Codec) *cobra.Command {
 	}
 
 	feegrantTxCmd.AddCommand(
-		NewCmdFeeGrant(ac),
-		NewCmdRevokeFeegrant(ac),
+		NewCmdFeeGrant(),
 	)
 
 	return feegrantTxCmd
 }
 
 // NewCmdFeeGrant returns a CLI command handler to create a MsgGrantAllowance transaction.
-func NewCmdFeeGrant(ac address.Codec) *cobra.Command {
+// This command is more powerful than AutoCLI generated command as it allows a better input validation.
+func NewCmdFeeGrant() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "grant [granter_key_or_address] [grantee]",
-		Short: "Grant Fee allowance to an address",
+		Use:     "grant [granter_key_or_address] [grantee]",
+		Aliases: []string{"grant-allowance"},
+		Short:   "Grant Fee allowance to an address",
 		Long: strings.TrimSpace(
 			fmt.Sprintf(
 				`Grant authorization to pay fees from your address. Note, the '--from' flag is
@@ -74,12 +75,16 @@ Examples:
 				return err
 			}
 
-			grantee, err := ac.StringToBytes(args[1])
+			_, err = clientCtx.AddressCodec.StringToBytes(args[1])
 			if err != nil {
 				return err
 			}
 
 			granter := clientCtx.GetFromAddress()
+			granterStr, err := clientCtx.AddressCodec.BytesToString(granter)
+			if err != nil {
+				return err
+			}
 			sl, err := cmd.Flags().GetString(FlagSpendLimit)
 			if err != nil {
 				return err
@@ -132,11 +137,11 @@ Examples:
 				}
 
 				if periodClock <= 0 {
-					return fmt.Errorf("period clock was not set")
+					return errors.New("period clock was not set")
 				}
 
 				if periodLimit == nil {
-					return fmt.Errorf("period limit was not set")
+					return errors.New("period limit was not set")
 				}
 
 				periodReset := getPeriodReset(periodClock)
@@ -147,7 +152,6 @@ Examples:
 				periodic := feegrant.PeriodicAllowance{
 					Basic:            basic,
 					Period:           getPeriod(periodClock),
-					PeriodReset:      getPeriodReset(periodClock),
 					PeriodSpendLimit: periodLimit,
 					PeriodCanSpend:   periodLimit,
 				}
@@ -167,7 +171,7 @@ Examples:
 				}
 			}
 
-			msg, err := feegrant.NewMsgGrantAllowance(grant, granter, grantee)
+			msg, err := feegrant.NewMsgGrantAllowance(grant, granterStr, args[1])
 			if err != nil {
 				return err
 			}
@@ -183,44 +187,6 @@ Examples:
 	cmd.Flags().Int64(FlagPeriod, 0, "period specifies the time duration(in seconds) in which period_limit coins can be spent before that allowance is reset (ex: 3600)")
 	cmd.Flags().String(FlagPeriodLimit, "", "period limit specifies the maximum number of coins that can be spent in the period")
 
-	return cmd
-}
-
-// NewCmdRevokeFeegrant returns a CLI command handler to create a MsgRevokeAllowance transaction.
-func NewCmdRevokeFeegrant(ac address.Codec) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "revoke [granter] [grantee]",
-		Short: "revoke fee-grant",
-		Long: strings.TrimSpace(
-			fmt.Sprintf(`revoke fee grant from a granter to a grantee. Note, the '--from' flag is
-			ignored as it is implied from [granter].
-
-Example:
- $ %s tx %s revoke cosmos1skj.. cosmos1skj..
-			`, version.AppName, feegrant.ModuleName),
-		),
-		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cmd.Flags().Set(flags.FlagFrom, args[0]); err != nil {
-				return err
-			}
-			clientCtx, err := client.GetClientTxContext(cmd)
-			if err != nil {
-				return err
-			}
-
-			grantee, err := ac.StringToBytes(args[1])
-			if err != nil {
-				return err
-			}
-
-			msg := feegrant.NewMsgRevokeAllowance(clientCtx.GetFromAddress(), grantee)
-
-			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), &msg)
-		},
-	}
-
-	flags.AddTxFlagsToCmd(cmd)
 	return cmd
 }
 

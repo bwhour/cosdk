@@ -9,6 +9,7 @@ import (
 	protov2 "google.golang.org/protobuf/proto"
 
 	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 )
 
@@ -78,6 +79,14 @@ type (
 		GetTimeoutHeight() uint64
 	}
 
+	// TxWithUnordered extends the Tx interface by allowing a transaction to set
+	// the unordered field, which implicitly relies on TxWithTimeoutHeight.
+	TxWithUnordered interface {
+		TxWithTimeoutHeight
+
+		GetUnordered() bool
+	}
+
 	// HasValidateBasic defines a type that has a ValidateBasic method.
 	// ValidateBasic is deprecated and now facultative.
 	// Prefer validating messages directly in the msg server.
@@ -95,13 +104,7 @@ type TxDecoder func(txBytes []byte) (Tx, error)
 type TxEncoder func(tx Tx) ([]byte, error)
 
 // MsgTypeURL returns the TypeURL of a `sdk.Msg`.
-func MsgTypeURL(msg proto.Message) string {
-	if m, ok := msg.(protov2.Message); ok {
-		return "/" + string(m.ProtoReflect().Descriptor().FullName())
-	}
-
-	return "/" + proto.MessageName(msg)
-}
+var MsgTypeURL = codectypes.MsgTypeURL
 
 // GetMsgFromTypeURL returns a `sdk.Msg` message type from a type URL
 func GetMsgFromTypeURL(cdc codec.Codec, input string) (Msg, error) {

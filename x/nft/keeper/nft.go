@@ -21,26 +21,27 @@ func (k Keeper) Mint(ctx context.Context, token nft.NFT, receiver sdk.AccAddress
 		return errors.Wrap(nft.ErrNFTExists, token.Id)
 	}
 
-	k.mintWithNoCheck(ctx, token, receiver)
-	return nil
+	return k.mintWithNoCheck(ctx, token, receiver)
 }
 
 // mintWithNoCheck defines a method for minting a new nft
 // Note: this method does not check whether the class already exists in nft.
 // The upper-layer application needs to check it when it needs to use it.
-func (k Keeper) mintWithNoCheck(ctx context.Context, token nft.NFT, receiver sdk.AccAddress) {
+func (k Keeper) mintWithNoCheck(ctx context.Context, token nft.NFT, receiver sdk.AccAddress) error {
 	k.setNFT(ctx, token)
 	k.setOwner(ctx, token.ClassId, token.Id, receiver)
 	k.incrTotalSupply(ctx, token.ClassId)
 
-	err := sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&nft.EventMint{
+	recStr, err := k.ac.BytesToString(receiver.Bytes())
+	if err != nil {
+		return err
+	}
+
+	return k.env.EventService.EventManager(ctx).Emit(&nft.EventMint{
 		ClassId: token.ClassId,
 		Id:      token.Id,
-		Owner:   receiver.String(),
+		Owner:   recStr,
 	})
-	if err != nil {
-		panic(err)
-	}
 }
 
 // Burn defines a method for burning a nft from a specific account.
@@ -71,15 +72,17 @@ func (k Keeper) burnWithNoCheck(ctx context.Context, classID, nftID string) erro
 
 	k.deleteOwner(ctx, classID, nftID, owner)
 	k.decrTotalSupply(ctx, classID)
-	err := sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&nft.EventBurn{
-		ClassId: classID,
-		Id:      nftID,
-		Owner:   owner.String(),
-	})
+
+	ownerStr, err := k.ac.BytesToString(owner.Bytes())
 	if err != nil {
 		return err
 	}
-	return nil
+
+	return k.env.EventService.EventManager(ctx).Emit(&nft.EventBurn{
+		ClassId: classID,
+		Id:      nftID,
+		Owner:   ownerStr,
+	})
 }
 
 // Update defines a method for updating an exist nft
@@ -96,7 +99,7 @@ func (k Keeper) Update(ctx context.Context, token nft.NFT) error {
 	return nil
 }
 
-// Update defines a method for updating an exist nft
+// updateWithNoCheck defines a method for updating an exist nft
 // Note: this method does not check whether the class already exists in nft.
 // The upper-layer application needs to check it when it needs to use it
 func (k Keeper) updateWithNoCheck(ctx context.Context, token nft.NFT) {
@@ -125,7 +128,7 @@ func (k Keeper) Transfer(ctx context.Context,
 	return nil
 }
 
-// Transfer defines a method for sending a nft from one account to another account.
+// transferWithNoCheck defines a method for sending a nft from one account to another account.
 // Note: this method does not check whether the class already exists in nft.
 // The upper-layer application needs to check it when it needs to use it
 func (k Keeper) transferWithNoCheck(ctx context.Context,
@@ -180,7 +183,7 @@ func (k Keeper) GetNFTsOfClass(ctx context.Context, classID string) (nfts []nft.
 
 // GetOwner returns the owner information of the specified nft
 func (k Keeper) GetOwner(ctx context.Context, classID, nftID string) sdk.AccAddress {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	bz, err := store.Get(ownerStoreKey(classID, nftID))
 	if err != nil {
 		panic(err)
@@ -196,7 +199,7 @@ func (k Keeper) GetBalance(ctx context.Context, classID string, owner sdk.AccAdd
 
 // GetTotalSupply returns the number of all nfts under the specified classID
 func (k Keeper) GetTotalSupply(ctx context.Context, classID string) uint64 {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	bz, err := store.Get(classTotalSupply(classID))
 	if err != nil {
 		panic(err)
@@ -217,7 +220,7 @@ func (k Keeper) setNFT(ctx context.Context, token nft.NFT) {
 }
 
 func (k Keeper) setOwner(ctx context.Context, classID, nftID string, owner sdk.AccAddress) {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	err := store.Set(ownerStoreKey(classID, nftID), owner.Bytes())
 	if err != nil {
 		panic(err)
@@ -228,7 +231,7 @@ func (k Keeper) setOwner(ctx context.Context, classID, nftID string, owner sdk.A
 }
 
 func (k Keeper) deleteOwner(ctx context.Context, classID, nftID string, owner sdk.AccAddress) {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	err := store.Delete(ownerStoreKey(classID, nftID))
 	if err != nil {
 		panic(err)
@@ -238,18 +241,18 @@ func (k Keeper) deleteOwner(ctx context.Context, classID, nftID string, owner sd
 }
 
 func (k Keeper) getNFTStore(ctx context.Context, classID string) prefix.Store {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	return prefix.NewStore(runtime.KVStoreAdapter(store), nftStoreKey(classID))
 }
 
 func (k Keeper) getClassStoreByOwner(ctx context.Context, owner sdk.AccAddress, classID string) prefix.Store {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	key := nftOfClassByOwnerStoreKey(owner, classID)
 	return prefix.NewStore(runtime.KVStoreAdapter(store), key)
 }
 
 func (k Keeper) prefixStoreNftOfClassByOwner(ctx context.Context, owner sdk.AccAddress) prefix.Store {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	key := prefixNftOfClassByOwnerStoreKey(owner)
 	return prefix.NewStore(runtime.KVStoreAdapter(store), key)
 }
@@ -265,7 +268,7 @@ func (k Keeper) decrTotalSupply(ctx context.Context, classID string) {
 }
 
 func (k Keeper) updateTotalSupply(ctx context.Context, classID string, supply uint64) {
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.env.KVStoreService.OpenKVStore(ctx)
 	supplyKey := classTotalSupply(classID)
 	err := store.Set(supplyKey, sdk.Uint64ToBigEndian(supply))
 	if err != nil {

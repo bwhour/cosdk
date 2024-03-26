@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"cosmossdk.io/x/group"
+	"cosmossdk.io/x/group/keeper"
+
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -14,8 +17,6 @@ import (
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
-	"github.com/cosmos/cosmos-sdk/x/group"
-	"github.com/cosmos/cosmos-sdk/x/group/keeper"
 	"github.com/cosmos/cosmos-sdk/x/simulation"
 )
 
@@ -230,7 +231,7 @@ func SimulateMsgCreateGroup(
 		accAddr := acc.Address.String()
 
 		spendableCoins := bk.SpendableCoins(ctx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, ctx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgCreateGroup, "fee error"), nil, err
 		}
@@ -277,7 +278,7 @@ func SimulateMsgCreateGroupWithPolicy(
 		accAddr := acc.Address.String()
 
 		spendableCoins := bk.SpendableCoins(ctx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, ctx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgCreateGroup, "fee error"), nil, err
 		}
@@ -347,7 +348,7 @@ func SimulateMsgCreateGroupPolicy(
 		groupID := groupInfo.Id
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgCreateGroupPolicy, "fee error"), nil, err
 		}
@@ -436,7 +437,7 @@ func SimulateMsgSubmitProposal(
 		}
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgSubmitProposal, "fee error"), nil, err
 		}
@@ -494,7 +495,7 @@ func SimulateMsgUpdateGroupAdmin(
 		groupID := groupInfo.Id
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgUpdateGroupAdmin, "fee error"), nil, err
 		}
@@ -559,7 +560,7 @@ func SimulateMsgUpdateGroupMetadata(
 		groupID := groupInfo.Id
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgUpdateGroupMetadata, "fee error"), nil, err
 		}
@@ -615,7 +616,7 @@ func SimulateMsgUpdateGroupMembers(
 		groupID := groupInfo.Id
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgUpdateGroupMembers, "fee error"), nil, err
 		}
@@ -698,7 +699,7 @@ func SimulateMsgUpdateGroupPolicyAdmin(
 		groupPolicyAddr := groupPolicy.Address
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgUpdateGroupPolicyAdmin, "fee error"), nil, err
 		}
@@ -763,7 +764,7 @@ func SimulateMsgUpdateGroupPolicyDecisionPolicy(
 		groupPolicyAddr := groupPolicy.Address
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgUpdateGroupPolicyDecisionPolicy, "fee error"), nil, err
 		}
@@ -827,7 +828,7 @@ func SimulateMsgUpdateGroupPolicyMetadata(
 		groupPolicyAddr := groupPolicy.Address
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgUpdateGroupPolicyMetadata, "fee error"), nil, err
 		}
@@ -912,7 +913,7 @@ func SimulateMsgWithdrawProposal(
 				timeout := p.VotingPeriodEnd
 				proposal = p
 				proposalID = int(p.Id)
-				if timeout.Before(sdkCtx.BlockTime()) || timeout.Equal(sdkCtx.BlockTime()) {
+				if timeout.Before(sdkCtx.HeaderInfo().Time) || timeout.Equal(sdkCtx.HeaderInfo().Time) {
 					return simtypes.NoOpMsg(group.ModuleName, TypeMsgWithdrawProposal, "voting period ended: skipping"), nil, nil
 				}
 				break
@@ -932,7 +933,7 @@ func SimulateMsgWithdrawProposal(
 		proposerAcc := ak.GetAccount(sdkCtx, proposer.Address)
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, proposer.Address)
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgWithdrawProposal, "fee error"), nil, err
 		}
@@ -958,7 +959,6 @@ func SimulateMsgWithdrawProposal(
 		}
 
 		_, _, err = app.SimDeliver(txGen.TxEncoder(), tx)
-
 		if err != nil {
 			if strings.Contains(err.Error(), "group was modified") || strings.Contains(err.Error(), "group policy was modified") {
 				return simtypes.NoOpMsg(group.ModuleName, sdk.MsgTypeURL(msg), "no-op:group/group-policy was modified"), nil, nil
@@ -1003,7 +1003,7 @@ func SimulateMsgVote(
 		}
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgVote, "fee error"), nil, err
 		}
@@ -1023,7 +1023,7 @@ func SimulateMsgVote(
 			if p.Status == group.PROPOSAL_STATUS_SUBMITTED {
 				timeout := p.VotingPeriodEnd
 				proposalID = int(p.Id)
-				if timeout.Before(sdkCtx.BlockTime()) || timeout.Equal(sdkCtx.BlockTime()) {
+				if timeout.Before(sdkCtx.HeaderInfo().Time) || timeout.Equal(sdkCtx.HeaderInfo().Time) {
 					return simtypes.NoOpMsg(group.ModuleName, TypeMsgVote, "voting period ended: skipping"), nil, nil
 				}
 				break
@@ -1066,7 +1066,6 @@ func SimulateMsgVote(
 		}
 
 		_, _, err = app.SimDeliver(txGen.TxEncoder(), tx)
-
 		if err != nil {
 			if strings.Contains(err.Error(), "group was modified") || strings.Contains(err.Error(), "group policy was modified") {
 				return simtypes.NoOpMsg(group.ModuleName, sdk.MsgTypeURL(msg), "no-op:group/group-policy was modified"), nil, nil
@@ -1099,7 +1098,7 @@ func SimulateMsgExec(
 		groupPolicyAddr := groupPolicy.Address
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, account.GetAddress())
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgExec, "fee error"), nil, err
 		}
@@ -1188,7 +1187,7 @@ func SimulateMsgLeaveGroup(
 		}
 
 		spendableCoins := bk.SpendableCoins(sdkCtx, acc.Address)
-		fees, err := simtypes.RandomFees(r, sdkCtx, spendableCoins)
+		fees, err := simtypes.RandomFees(r, spendableCoins)
 		if err != nil {
 			return simtypes.NoOpMsg(group.ModuleName, TypeMsgLeaveGroup, "fee error"), nil, err
 		}
@@ -1229,13 +1228,19 @@ func randomGroup(r *rand.Rand, k keeper.Keeper, ak group.AccountKeeper,
 
 	switch {
 	case groupID > initialGroupID:
-		// select a random ID between [initialGroupID, groupID]
-		groupID = uint64(simtypes.RandIntBetween(r, int(initialGroupID), int(groupID)))
+		// select a random ID between (initialGroupID, groupID]
+		// if there is at least one group information, then the groupID at this time must be greater than or equal to 1
+		groupID = uint64(simtypes.RandIntBetween(r, int(initialGroupID+1), int(groupID+1)))
 
 	default:
 		// This is called on the first call to this function
 		// in order to update the global variable
 		initialGroupID = groupID
+	}
+
+	// when groupID is 0, it proves that SimulateMsgCreateGroup has never been called. that is, no group exists in the chain
+	if groupID == 0 {
+		return nil, simtypes.Account{}, nil, nil
 	}
 
 	res, err := k.GroupInfo(ctx, &group.QueryGroupInfoRequest{GroupId: groupID})

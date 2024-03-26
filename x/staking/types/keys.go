@@ -1,10 +1,7 @@
 package types
 
 import (
-	"bytes"
 	"encoding/binary"
-	"fmt"
-	"time"
 
 	"cosmossdk.io/collections"
 	addresscodec "cosmossdk.io/core/address"
@@ -27,6 +24,11 @@ const (
 
 	// GovModuleName is the name of the gov module
 	GovModuleName = "gov"
+
+	// PoolModuleName duplicates the Protocolpool module's name to avoid a cyclic dependency with x/protocolpool.
+	// It should be synced with the distribution module's name if it is ever changed.
+	// See: https://github.com/cosmos/cosmos-sdk/blob/912390d5fc4a32113ea1aacc98b77b2649aea4c2/x/distribution/types/keys.go#L15
+	PoolModuleName = "protocolpool"
 )
 
 var (
@@ -44,23 +46,30 @@ var (
 	UnbondingDelegationByValIndexKey = collections.NewPrefix(51) // prefix for each key for an unbonding-delegation, by validator operator
 
 	RedelegationKey              = collections.NewPrefix(52) // key for a redelegation
-	RedelegationByValSrcIndexKey = collections.NewPrefix(53) // prefix for each key for an redelegation, by source validator operator
-	RedelegationByValDstIndexKey = collections.NewPrefix(54) // prefix for each key for an redelegation, by destination validator operator
+	RedelegationByValSrcIndexKey = collections.NewPrefix(53) // prefix for each key for a redelegation, by source validator operator
+	RedelegationByValDstIndexKey = collections.NewPrefix(54) // prefix for each key for a redelegation, by destination validator operator
 
 	UnbondingIDKey    = collections.NewPrefix(55) // key for the counter for the incrementing id for UnbondingOperations
 	UnbondingIndexKey = collections.NewPrefix(56) // prefix for an index for looking up unbonding operations by their IDs
 	UnbondingTypeKey  = collections.NewPrefix(57) // prefix for an index containing the type of unbonding operations
 
 	UnbondingQueueKey    = collections.NewPrefix(65) // prefix for the timestamps in unbonding queue
-	RedelegationQueueKey = []byte{0x42}              // prefix for the timestamps in redelegations queue
-	ValidatorQueueKey    = []byte{0x43}              // prefix for the timestamps in validator queue
+	RedelegationQueueKey = collections.NewPrefix(66) // prefix for the timestamps in redelegations queue
+	ValidatorQueueKey    = collections.NewPrefix(67) // prefix for the timestamps in validator queue
 
 	HistoricalInfoKey   = collections.NewPrefix(80) // prefix for the historical info
 	ValidatorUpdatesKey = collections.NewPrefix(97) // prefix for the end block validator updates key
 
-	ParamsKey = []byte{0x51} // prefix for parameters for module x/staking
+	ParamsKey = collections.NewPrefix(81) // prefix for parameters for module x/staking
 
-	DelegationByValIndexKey = []byte{0x71} // key for delegations by a validator
+	DelegationByValIndexKey = collections.NewPrefix(113) // key for delegations by a validator
+
+	ValidatorConsPubKeyRotationHistoryKey       = collections.NewPrefix(101) // prefix for consPubkey rotation history by validator
+	BlockConsPubKeyRotationHistoryKey           = collections.NewPrefix(102) // prefix for consPubkey rotation history by height
+	ValidatorConsensusKeyRotationRecordQueueKey = collections.NewPrefix(103) // this key is used to set the unbonding period time on each rotation
+	ValidatorConsensusKeyRotationRecordIndexKey = collections.NewPrefix(104) // this key is used to restrict the validator next rotation within waiting (unbonding) period
+	NewToOldConsKeyMap                          = collections.NewPrefix(105) // prefix for rotated cons address to new cons address
+	OldToNewConsKeyMap                          = collections.NewPrefix(106) // prefix for rotated cons address to new cons address
 )
 
 // UnbondingType defines the type of unbonding operation
@@ -142,50 +151,6 @@ func ParseValidatorPowerRankKey(key []byte) (operAddr []byte) {
 	return operAddr
 }
 
-// GetValidatorQueueKey returns the prefix key used for getting a set of unbonding
-// validators whose unbonding completion occurs at the given time and height.
-func GetValidatorQueueKey(timestamp time.Time, height int64) []byte {
-	heightBz := sdk.Uint64ToBigEndian(uint64(height))
-	timeBz := sdk.FormatTimeBytes(timestamp)
-	timeBzL := len(timeBz)
-	prefixL := len(ValidatorQueueKey)
-
-	bz := make([]byte, prefixL+8+timeBzL+8)
-
-	// copy the prefix
-	copy(bz[:prefixL], ValidatorQueueKey)
-
-	// copy the encoded time bytes length
-	copy(bz[prefixL:prefixL+8], sdk.Uint64ToBigEndian(uint64(timeBzL)))
-
-	// copy the encoded time bytes
-	copy(bz[prefixL+8:prefixL+8+timeBzL], timeBz)
-
-	// copy the encoded height
-	copy(bz[prefixL+8+timeBzL:], heightBz)
-
-	return bz
-}
-
-// ParseValidatorQueueKey returns the encoded time and height from a key created
-// from GetValidatorQueueKey.
-func ParseValidatorQueueKey(bz []byte) (time.Time, int64, error) {
-	prefixL := len(ValidatorQueueKey)
-	if prefix := bz[:prefixL]; !bytes.Equal(prefix, ValidatorQueueKey) {
-		return time.Time{}, 0, fmt.Errorf("invalid prefix; expected: %X, got: %X", ValidatorQueueKey, prefix)
-	}
-
-	timeBzL := sdk.BigEndianToUint64(bz[prefixL : prefixL+8])
-	ts, err := sdk.ParseTimeBytes(bz[prefixL+8 : prefixL+8+int(timeBzL)])
-	if err != nil {
-		return time.Time{}, 0, err
-	}
-
-	height := sdk.BigEndianToUint64(bz[prefixL+8+int(timeBzL):])
-
-	return ts, int64(height), nil
-}
-
 // GetUBDKey creates the key for an unbonding delegation by delegator and validator addr
 // VALUE: staking/UnbondingDelegation
 func GetUBDKey(delAddr sdk.AccAddress, valAddr sdk.ValAddress) []byte {
@@ -205,13 +170,6 @@ func GetREDKey(delAddr sdk.AccAddress, valSrcAddr, valDstAddr sdk.ValAddress) []
 	copy(key[4+len(delAddr)+len(valSrcAddr):], valDstAddr.Bytes())
 
 	return key
-}
-
-// GetRedelegationTimeKey returns a key prefix for indexing an unbonding
-// redelegation based on a completion time.
-func GetRedelegationTimeKey(timestamp time.Time) []byte {
-	bz := sdk.FormatTimeBytes(timestamp)
-	return append(RedelegationQueueKey, bz...)
 }
 
 // GetREDsKey returns a key prefix for indexing a redelegation from a delegator

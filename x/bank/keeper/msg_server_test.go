@@ -1,9 +1,10 @@
 package keeper_test
 
 import (
+	authtypes "cosmossdk.io/x/auth/types"
+	banktypes "cosmossdk.io/x/bank/types"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
 var govAcc = authtypes.NewEmptyModuleAccount(banktypes.GovModuleName, authtypes.Minter)
@@ -355,6 +356,65 @@ func (suite *KeeperTestSuite) TestMsgSetSendEnabled() {
 			if tc.isExpErr {
 				suite.Require().Error(err)
 				suite.Require().Contains(err.Error(), tc.errMsg)
+			} else {
+				suite.Require().NoError(err)
+			}
+		})
+	}
+}
+
+func (suite *KeeperTestSuite) TestMsgBurn() {
+	origCoins := sdk.NewInt64Coin("eth", 100)
+	atom0 := sdk.NewInt64Coin("atom", 0)
+
+	testCases := []struct {
+		name      string
+		input     *banktypes.MsgBurn
+		expErr    bool
+		expErrMsg string
+	}{
+		{
+			name: "invalid coins",
+			input: &banktypes.MsgBurn{
+				FromAddress: multiPermAcc.GetAddress().String(),
+				Amount:      []*sdk.Coin{&atom0},
+			},
+			expErr:    true,
+			expErrMsg: "invalid coins",
+		},
+
+		{
+			name: "invalid from address: empty address string is not allowed: invalid address",
+			input: &banktypes.MsgBurn{
+				FromAddress: "",
+				Amount:      []*sdk.Coin{&origCoins},
+			},
+			expErr:    true,
+			expErrMsg: "empty address string is not allowed",
+		},
+		{
+			name: "all good",
+			input: &banktypes.MsgBurn{
+				FromAddress: multiPermAcc.GetAddress().String(),
+				Amount:      []*sdk.Coin{&origCoins},
+			},
+			expErr: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		suite.Run(tc.name, func() {
+			suite.mockMintCoins(multiPermAcc)
+			err := suite.bankKeeper.MintCoins(suite.ctx, multiPermAcc.Name, sdk.Coins{}.Add(origCoins))
+			suite.Require().NoError(err)
+			if !tc.expErr {
+				suite.mockBurnCoins(multiPermAcc)
+			}
+			_, err = suite.msgServer.Burn(suite.ctx, tc.input)
+			if tc.expErr {
+				suite.Require().Error(err)
+				suite.Require().Contains(err.Error(), tc.expErrMsg)
 			} else {
 				suite.Require().NoError(err)
 			}

@@ -8,11 +8,10 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/errors"
+	"cosmossdk.io/x/distribution/types"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
-	"github.com/cosmos/cosmos-sdk/x/distribution/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 var _ types.QueryServer = Querier{}
@@ -265,27 +264,32 @@ func (k Querier) DelegationTotalRewards(ctx context.Context, req *types.QueryDel
 		return nil, err
 	}
 
+	var iterErr error
 	err = k.stakingKeeper.IterateDelegations(
 		ctx, delAdr,
-		func(_ int64, del stakingtypes.DelegationI) (stop bool) {
+		func(_ int64, del sdk.DelegationI) (stop bool) {
 			valAddr, err := k.stakingKeeper.ValidatorAddressCodec().StringToBytes(del.GetValidatorAddr())
 			if err != nil {
-				panic(err)
+				iterErr = err
+				return true
 			}
 
 			val, err := k.stakingKeeper.Validator(ctx, valAddr)
 			if err != nil {
-				panic(err)
+				iterErr = err
+				return true
 			}
 
 			endingPeriod, err := k.IncrementValidatorPeriod(ctx, val)
 			if err != nil {
-				panic(err)
+				iterErr = err
+				return true
 			}
 
 			delReward, err := k.CalculateDelegationRewards(ctx, val, del, endingPeriod)
 			if err != nil {
-				panic(err)
+				iterErr = err
+				return true
 			}
 
 			delRewards = append(delRewards, types.NewDelegationDelegatorReward(del.GetValidatorAddr(), delReward))
@@ -293,6 +297,9 @@ func (k Querier) DelegationTotalRewards(ctx context.Context, req *types.QueryDel
 			return false
 		},
 	)
+	if iterErr != nil {
+		return nil, iterErr
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -318,12 +325,11 @@ func (k Querier) DelegatorValidators(ctx context.Context, req *types.QueryDelega
 
 	err = k.stakingKeeper.IterateDelegations(
 		ctx, delAdr,
-		func(_ int64, del stakingtypes.DelegationI) (stop bool) {
+		func(_ int64, del sdk.DelegationI) (stop bool) {
 			validators = append(validators, del.GetValidatorAddr())
 			return false
 		},
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -353,12 +359,13 @@ func (k Querier) DelegatorWithdrawAddress(ctx context.Context, req *types.QueryD
 	return &types.QueryDelegatorWithdrawAddressResponse{WithdrawAddress: withdrawAddr.String()}, nil
 }
 
+// Deprecated: DO NOT USE
+// This method uses deprecated query request. Use CommunityPool from x/protocolpool module instead.
 // CommunityPool queries the community pool coins
 func (k Querier) CommunityPool(ctx context.Context, req *types.QueryCommunityPoolRequest) (*types.QueryCommunityPoolResponse, error) {
-	pool, err := k.FeePool.Get(ctx)
+	pool, err := k.poolKeeper.GetCommunityPool(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	return &types.QueryCommunityPoolResponse{Pool: pool.CommunityPool}, nil
+	return &types.QueryCommunityPoolResponse{Pool: sdk.NewDecCoinsFromCoins(pool...)}, nil
 }

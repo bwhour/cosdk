@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/spf13/viper"
 
@@ -70,7 +69,7 @@ type BaseConfig struct {
 	// It has no bearing on application state pruning which is determined by the
 	// "pruning-*" configurations.
 	//
-	// Note: CometBFT block pruning is dependant on this parameter in conjunction
+	// Note: CometBFT block pruning is dependent on this parameter in conjunction
 	// with the unbonding (safety threshold) period, state pruning and state sync
 	// snapshot parameters to determine the correct minimum value of
 	// ResponseCommit.RetainHeight.
@@ -166,7 +165,7 @@ type MempoolConfig struct {
 	// the mempool is disabled entirely, zero indicates that the mempool is
 	// unbounded in how many txs it may contain, and a positive value indicates
 	// the maximum amount of txs it may contain.
-	MaxTxs int
+	MaxTxs int `mapstructure:"max-txs"`
 }
 
 // State Streaming configuration
@@ -202,23 +201,15 @@ func (c *Config) SetMinGasPrices(gasPrices sdk.DecCoins) {
 	c.MinGasPrices = gasPrices.String()
 }
 
-// GetMinGasPrices returns the validator's minimum gas prices based on the set
-// configuration.
+// GetMinGasPrices returns the validator's minimum gas prices based on the set configuration.
 func (c *Config) GetMinGasPrices() sdk.DecCoins {
 	if c.MinGasPrices == "" {
 		return sdk.DecCoins{}
 	}
 
-	gasPricesStr := strings.Split(c.MinGasPrices, ";")
-	gasPrices := make(sdk.DecCoins, len(gasPricesStr))
-
-	for i, s := range gasPricesStr {
-		gasPrice, err := sdk.ParseDecCoin(s)
-		if err != nil {
-			panic(fmt.Errorf("failed to parse minimum gas price coin (%s): %s", s, err))
-		}
-
-		gasPrices[i] = gasPrice
+	gasPrices, err := sdk.ParseDecCoins(c.MinGasPrices)
+	if err != nil {
+		panic(fmt.Sprintf("invalid minimum gas prices: %v", err))
 	}
 
 	return gasPrices

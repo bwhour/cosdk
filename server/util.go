@@ -44,7 +44,7 @@ import (
 // a command's Context.
 const ServerContextKey = sdk.ContextKey("server.context")
 
-// server context
+// Context server context
 type Context struct {
 	Viper  *viper.Viper
 	Config *cmtcfg.Config
@@ -173,6 +173,10 @@ func CreateSDKLogger(ctx *Context, out io.Writer) (log.Logger, error) {
 	if ctx.Viper.GetString(flags.FlagLogFormat) == flags.OutputFormatJSON {
 		opts = append(opts, log.OutputJSONOption())
 	}
+	opts = append(opts,
+		log.ColorOption(!ctx.Viper.GetBool(flags.FlagLogNoColor)),
+		// We use CometBFT flag (cmtcli.TraceFlag) for trace logging.
+		log.TraceOption(ctx.Viper.GetBool(FlagTrace)))
 
 	// check and set filter level or keys for the logger if any
 	logLvlStr := ctx.Viper.GetString(flags.FlagLogLevel)
@@ -194,9 +198,6 @@ func CreateSDKLogger(ctx *Context, out io.Writer) (log.Logger, error) {
 		opts = append(opts, log.LevelOption(logLvl))
 	}
 
-	// Check if the CometBFT flag for trace logging is set and enable stack traces if so.
-	opts = append(opts, log.TraceOption(ctx.Viper.GetBool("trace"))) // cmtcli.TraceFlag
-
 	return log.NewLogger(out, opts...), nil
 }
 
@@ -214,13 +215,15 @@ func GetServerContextFromCmd(cmd *cobra.Command) *Context {
 // SetCmdServerContext sets a command's Context value to the provided argument.
 // If the context has not been set, set the given context as the default.
 func SetCmdServerContext(cmd *cobra.Command, serverCtx *Context) error {
-	v := cmd.Context().Value(ServerContextKey)
-	if v == nil {
-		v = serverCtx
+	var cmdCtx context.Context
+
+	if cmd.Context() == nil {
+		cmdCtx = context.Background()
+	} else {
+		cmdCtx = cmd.Context()
 	}
 
-	serverCtxPtr := v.(*Context)
-	*serverCtxPtr = *serverCtx
+	cmd.SetContext(context.WithValue(cmdCtx, ServerContextKey, serverCtx))
 
 	return nil
 }
@@ -320,8 +323,8 @@ func interceptConfigs(rootViper *viper.Viper, customAppTemplate string, customCo
 	return conf, nil
 }
 
-// add server commands
-func AddCommands(rootCmd *cobra.Command, appCreator types.AppCreator, appExport types.AppExporter, addStartFlags types.ModuleInitFlags) {
+// AddCommands add server commands
+func AddCommands[T types.Application](rootCmd *cobra.Command, appCreator types.AppCreator[T], addStartFlags types.ModuleInitFlags) {
 	cometCmd := &cobra.Command{
 		Use:     "comet",
 		Aliases: []string{"cometbft", "tendermint"},
@@ -339,18 +342,26 @@ func AddCommands(rootCmd *cobra.Command, appCreator types.AppCreator, appExport 
 	)
 
 	startCmd := StartCmd(appCreator)
-	addStartFlags(startCmd)
+	if addStartFlags != nil {
+		addStartFlags(startCmd)
+	}
 
 	rootCmd.AddCommand(
 		startCmd,
 		cometCmd,
-		ExportCmd(appExport),
 		version.NewVersionCommand(),
 		NewRollbackCmd(appCreator),
 	)
 }
 
-// https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
+// AddTestnetCreatorCommand allows chains to create a testnet from the state existing in their node's data directory.
+func AddTestnetCreatorCommand[T types.Application](rootCmd *cobra.Command, appCreator types.AppCreator[T], addStartFlags types.ModuleInitFlags) {
+	testnetCreateCmd := InPlaceTestnetCreator(appCreator)
+	addStartFlags(testnetCreateCmd)
+	rootCmd.AddCommand(testnetCreateCmd)
+}
+
+// ExternalIP https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
 // TODO there must be a better way to get external IP
 func ExternalIP() (string, error) {
 	ifaces, err := net.Interfaces()
@@ -452,7 +463,8 @@ func addrToIP(addr net.Addr) net.IP {
 	return ip
 }
 
-func openDB(rootDir string, backendType dbm.BackendType) (dbm.DB, error) {
+// OpenDB opens the application database using the appropriate driver.
+func OpenDB(rootDir string, backendType dbm.BackendType) (dbm.DB, error) {
 	dataDir := filepath.Join(rootDir, "data")
 	return dbm.NewDB("application", backendType, dataDir)
 }
@@ -485,12 +497,16 @@ func DefaultBaseappOptions(appOpts types.AppOptions) []func(*baseapp.BaseApp) {
 	chainID := cast.ToString(appOpts.Get(flags.FlagChainID))
 	if chainID == "" {
 		// fallback to genesis chain-id
-		appGenesis, err := genutiltypes.AppGenesisFromFile(filepath.Join(homeDir, "config", "genesis.json"))
+		reader, err := os.Open(filepath.Join(homeDir, "config", "genesis.json"))
 		if err != nil {
 			panic(err)
 		}
+		defer reader.Close()
 
-		chainID = appGenesis.ChainID
+		chainID, err = genutiltypes.ParseChainIDFromGenesis(reader)
+		if err != nil {
+			panic(fmt.Errorf("failed to parse chain-id from genesis file: %w", err))
+		}
 	}
 
 	snapshotStore, err := GetSnapshotStore(appOpts)
@@ -533,7 +549,7 @@ func DefaultBaseappOptions(appOpts types.AppOptions) []func(*baseapp.BaseApp) {
 func GetSnapshotStore(appOpts types.AppOptions) (*snapshots.Store, error) {
 	homeDir := cast.ToString(appOpts.Get(flags.FlagHome))
 	snapshotDir := filepath.Join(homeDir, "data", "snapshots")
-	if err := os.MkdirAll(snapshotDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(snapshotDir, 0o744); err != nil {
 		return nil, fmt.Errorf("failed to create snapshots directory: %w", err)
 	}
 

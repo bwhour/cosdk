@@ -8,11 +8,14 @@ import (
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 
+	"cosmossdk.io/core/address"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
 	"cosmossdk.io/store/metrics"
 	storetypes "cosmossdk.io/store/types"
+	authtx "cosmossdk.io/x/auth/tx"
+	authtypes "cosmossdk.io/x/auth/types"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -21,8 +24,6 @@ import (
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
-	authtx "github.com/cosmos/cosmos-sdk/x/auth/tx"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	consensusparamkeeper "github.com/cosmos/cosmos-sdk/x/consensus/keeper"
 	consensusparamtypes "github.com/cosmos/cosmos-sdk/x/consensus/types"
 )
@@ -46,23 +47,26 @@ func NewIntegrationApp(
 	logger log.Logger,
 	keys map[string]*storetypes.KVStoreKey,
 	appCodec codec.Codec,
+	addressCodec address.Codec,
+	validatorCodec address.Codec,
 	modules map[string]appmodule.AppModule,
 ) *App {
 	db := dbm.NewMemDB()
 
 	interfaceRegistry := codectypes.NewInterfaceRegistry()
 	moduleManager := module.NewManagerFromMap(modules)
-	basicModuleManager := module.NewBasicManagerFromManager(moduleManager, nil)
-	basicModuleManager.RegisterInterfaces(interfaceRegistry)
+	moduleManager.RegisterInterfaces(interfaceRegistry)
 
-	txConfig := authtx.NewTxConfig(codec.NewProtoCodec(interfaceRegistry), authtx.DefaultSignModes)
+	txConfig := authtx.NewTxConfig(codec.NewProtoCodec(interfaceRegistry), addressCodec, validatorCodec, authtx.DefaultSignModes)
 	bApp := baseapp.NewBaseApp(appName, logger, db, txConfig.TxDecoder(), baseapp.SetChainID(appName))
 	bApp.MountKVStores(keys)
 
 	bApp.SetInitChainer(func(ctx sdk.Context, _ *cmtabcitypes.RequestInitChain) (*cmtabcitypes.ResponseInitChain, error) {
 		for _, mod := range modules {
 			if m, ok := mod.(module.HasGenesis); ok {
-				m.InitGenesis(ctx, appCodec, m.DefaultGenesis(appCodec))
+				if err := m.InitGenesis(ctx, m.DefaultGenesis()); err != nil {
+					return nil, err
+				}
 			}
 		}
 
@@ -76,13 +80,13 @@ func NewIntegrationApp(
 		return moduleManager.EndBlock(sdkCtx)
 	})
 
-	router := baseapp.NewMsgServiceRouter()
-	router.SetInterfaceRegistry(interfaceRegistry)
-	bApp.SetMsgServiceRouter(router)
+	msgRouter := baseapp.NewMsgServiceRouter()
+	msgRouter.SetInterfaceRegistry(interfaceRegistry)
+	bApp.SetMsgServiceRouter(msgRouter)
 
 	if keys[consensusparamtypes.StoreKey] != nil {
 		// set baseApp param store
-		consensusParamsKeeper := consensusparamkeeper.NewKeeper(appCodec, runtime.NewKVStoreService(keys[consensusparamtypes.StoreKey]), authtypes.NewModuleAddress("gov").String(), runtime.EventService{})
+		consensusParamsKeeper := consensusparamkeeper.NewKeeper(appCodec, runtime.NewEnvironment(runtime.NewKVStoreService(keys[consensusparamtypes.StoreKey]), log.NewNopLogger(), runtime.EnvWithRouterService(baseapp.NewGRPCQueryRouter(), msgRouter)), authtypes.NewModuleAddress("gov").String())
 		bApp.SetParamStore(consensusParamsKeeper.ParamsStore)
 
 		if err := bApp.LoadLatestVersion(); err != nil {
@@ -142,7 +146,7 @@ func (app *App) RunMsg(msg sdk.Msg, option ...Option) (*codectypes.Any, error) {
 
 	if cfg.AutomaticFinalizeBlock {
 		height := app.LastBlockHeight() + 1
-		if _, err := app.FinalizeBlock(&cmtabcitypes.RequestFinalizeBlock{Height: height}); err != nil {
+		if _, err := app.FinalizeBlock(&cmtabcitypes.RequestFinalizeBlock{Height: height, DecidedLastCommit: cmtabcitypes.CommitInfo{Votes: []cmtabcitypes.VoteInfo{{}}}}); err != nil {
 			return nil, fmt.Errorf("failed to run finalize block: %w", err)
 		}
 	}

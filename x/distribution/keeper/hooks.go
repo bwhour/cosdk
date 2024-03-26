@@ -6,10 +6,11 @@ import (
 
 	"cosmossdk.io/collections"
 	sdkmath "cosmossdk.io/math"
+	"cosmossdk.io/x/distribution/types"
+	stakingtypes "cosmossdk.io/x/staking/types"
 
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/distribution/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // Wrapper struct
@@ -56,13 +57,13 @@ func (h Hooks) AfterValidatorRemoved(ctx context.Context, _ sdk.ConsAddress, val
 		// split into integral & remainder
 		coins, remainder := commission.TruncateDecimal()
 
-		// remainder to community pool
+		// remainder to decimal pool
 		feePool, err := h.k.FeePool.Get(ctx)
 		if err != nil {
 			return err
 		}
 
-		feePool.CommunityPool = feePool.CommunityPool.Add(remainder...)
+		feePool.DecimalPool = feePool.DecimalPool.Add(remainder...)
 		err = h.k.FeePool.Set(ctx, feePool)
 		if err != nil {
 			return err
@@ -82,15 +83,15 @@ func (h Hooks) AfterValidatorRemoved(ctx context.Context, _ sdk.ConsAddress, val
 		}
 	}
 
-	// Add outstanding to community pool
+	// Add outstanding to decimal pool
 	// The validator is removed only after it has no more delegations.
-	// This operation sends only the remaining dust to the community pool.
+	// This operation sends only the remaining dust to the decimal pool.
 	feePool, err := h.k.FeePool.Get(ctx)
 	if err != nil {
 		return err
 	}
 
-	feePool.CommunityPool = feePool.CommunityPool.Add(outstanding...)
+	feePool.DecimalPool = feePool.DecimalPool.Add(outstanding...)
 	err = h.k.FeePool.Set(ctx, feePool)
 	if err != nil {
 		return err
@@ -185,5 +186,9 @@ func (h Hooks) BeforeDelegationRemoved(_ context.Context, _ sdk.AccAddress, _ sd
 }
 
 func (h Hooks) AfterUnbondingInitiated(_ context.Context, _ uint64) error {
+	return nil
+}
+
+func (h Hooks) AfterConsensusPubKeyUpdate(_ context.Context, _, _ cryptotypes.PubKey, _ sdk.Coin) error {
 	return nil
 }

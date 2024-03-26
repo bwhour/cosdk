@@ -7,18 +7,20 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"cosmossdk.io/x/authz"
+	"cosmossdk.io/x/authz/keeper"
+	authzmodule "cosmossdk.io/x/authz/module"
+	"cosmossdk.io/x/authz/simulation"
+	banktypes "cosmossdk.io/x/bank/types"
+
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/kv"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	"github.com/cosmos/cosmos-sdk/x/authz"
-	"github.com/cosmos/cosmos-sdk/x/authz/keeper"
-	authzmodule "github.com/cosmos/cosmos-sdk/x/authz/module"
-	"github.com/cosmos/cosmos-sdk/x/authz/simulation"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
 func TestDecodeStore(t *testing.T) {
-	encCfg := moduletestutil.MakeTestEncodingConfig(authzmodule.AppModuleBasic{})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, authzmodule.AppModule{})
 	banktypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 
 	dec := simulation.NewDecodeStore(encCfg.Codec)

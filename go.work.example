@@ -1,6 +1,6 @@
-go 1.21
+go 1.22
 
-toolchain go1.21.0
+toolchain go1.22
 
 use (
 	.
@@ -15,15 +15,28 @@ use (
 	./orm
 	./simapp
 	./tests
+	./tests/starship/tests
 	./store
 	./tools/cosmovisor
 	./tools/confix
 	./tools/hubl
 	./x/accounts
-	./x/tx
-	./x/nft
+	./x/auth
+	./x/authz
+	./x/bank
 	./x/circuit
-	./x/feegrant
+	./x/distribution
 	./x/evidence
+	./x/feegrant
+ 	./x/gov
+	./x/group
+	./x/mint
+	./x/nft
+	./x/params
+	./x/protocolpool
+	./x/slashing
+	./x/staking
+	./x/tx
 	./x/upgrade
+	./x/accounts/defaults/lockup
 )

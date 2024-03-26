@@ -15,6 +15,7 @@ import (
 	snapshottypes "cosmossdk.io/store/snapshots/types"
 	storetypes "cosmossdk.io/store/types"
 
+	"github.com/cosmos/cosmos-sdk/baseapp/oe"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -106,6 +107,18 @@ func SetChainID(chainID string) func(*BaseApp) {
 	return func(app *BaseApp) { app.chainID = chainID }
 }
 
+// SetStoreLoader allows customization of the rootMultiStore initialization.
+func SetStoreLoader(loader StoreLoader) func(*BaseApp) {
+	return func(app *BaseApp) { app.SetStoreLoader(loader) }
+}
+
+// SetOptimisticExecution enables optimistic execution.
+func SetOptimisticExecution(opts ...func(*oe.OptimisticExecution)) func(*BaseApp) {
+	return func(app *BaseApp) {
+		app.optimisticExec = oe.NewOptimisticExecution(app.logger, app.internalFinalizeBlock, opts...)
+	}
+}
+
 func (app *BaseApp) SetName(name string) {
 	if app.sealed {
 		panic("SetName() on sealed BaseApp")
@@ -176,6 +189,18 @@ func (app *BaseApp) SetInitChainer(initChainer sdk.InitChainer) {
 	app.initChainer = initChainer
 }
 
+func (app *BaseApp) PreBlocker() sdk.PreBlocker {
+	return app.preBlocker
+}
+
+func (app *BaseApp) SetPreBlocker(preBlocker sdk.PreBlocker) {
+	if app.sealed {
+		panic("SetPreBlocker() on sealed BaseApp")
+	}
+
+	app.preBlocker = preBlocker
+}
+
 func (app *BaseApp) SetBeginBlocker(beginBlocker sdk.BeginBlocker) {
 	if app.sealed {
 		panic("SetBeginBlocker() on sealed BaseApp")
@@ -206,14 +231,6 @@ func (app *BaseApp) SetPrecommiter(precommiter sdk.Precommiter) {
 	}
 
 	app.precommiter = precommiter
-}
-
-func (app *BaseApp) SetPreFinalizeBlockHook(hook sdk.PreFinalizeBlockHook) {
-	if app.sealed {
-		panic("SetPreFinalizeBlockHook() on sealed BaseApp")
-	}
-
-	app.preFinalizeBlockHook = hook
 }
 
 func (app *BaseApp) SetAnteHandler(ah sdk.AnteHandler) {
@@ -254,6 +271,11 @@ func (app *BaseApp) SetFauxMerkleMode() {
 	}
 
 	app.fauxMerkleMode = true
+}
+
+// SetNotSigverifyTx during simulation testing, transaction signature verification needs to be ignored.
+func (app *BaseApp) SetNotSigverifyTx() {
+	app.sigverifyTx = false
 }
 
 // SetCommitMultiStoreTracer sets the store tracer on the BaseApp's underlying
@@ -362,4 +384,14 @@ func (app *BaseApp) SetStoreMetrics(gatherer metrics.StoreMetrics) {
 // SetStreamingManager sets the streaming manager for the BaseApp.
 func (app *BaseApp) SetStreamingManager(manager storetypes.StreamingManager) {
 	app.streamingManager = manager
+}
+
+// SetMsgServiceRouter sets the MsgServiceRouter of a BaseApp.
+func (app *BaseApp) SetMsgServiceRouter(msgServiceRouter *MsgServiceRouter) {
+	app.msgServiceRouter = msgServiceRouter
+}
+
+// SetGRPCQueryRouter sets the GRPCQueryRouter of the BaseApp.
+func (app *BaseApp) SetGRPCQueryRouter(grpcQueryRouter *GRPCQueryRouter) {
+	app.grpcQueryRouter = grpcQueryRouter
 }

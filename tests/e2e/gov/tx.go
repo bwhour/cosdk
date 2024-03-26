@@ -8,26 +8,25 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"cosmossdk.io/math"
+	authtypes "cosmossdk.io/x/auth/types"
+	"cosmossdk.io/x/gov/client/cli"
+	govclitestutil "cosmossdk.io/x/gov/client/testutil"
+	"cosmossdk.io/x/gov/types"
+	v1 "cosmossdk.io/x/gov/types/v1"
+	"cosmossdk.io/x/gov/types/v1beta1"
 
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	clitestutil "github.com/cosmos/cosmos-sdk/testutil/cli"
 	"github.com/cosmos/cosmos-sdk/testutil/network"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/cosmos-sdk/x/gov/client/cli"
-	govclitestutil "github.com/cosmos/cosmos-sdk/x/gov/client/testutil"
-	"github.com/cosmos/cosmos-sdk/x/gov/types"
-	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
-	"github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 )
 
 type E2ETestSuite struct {
 	suite.Suite
 
 	cfg     network.Config
-	network *network.Network
+	network network.NetworkI
 }
 
 func NewE2ETestSuite(cfg network.Config) *E2ETestSuite {
@@ -42,12 +41,12 @@ func (s *E2ETestSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.Require().NoError(s.network.WaitForNextBlock())
 
-	val := s.network.Validators[0]
-	clientCtx := val.ClientCtx
+	val := s.network.GetValidators()[0]
+	clientCtx := val.GetClientCtx()
 	var resp sdk.TxResponse
 
 	// create a proposal with deposit
-	out, err := govclitestutil.MsgSubmitLegacyProposal(val.ClientCtx, val.Address.String(),
+	out, err := govclitestutil.MsgSubmitLegacyProposal(val.GetClientCtx(), val.GetAddress().String(),
 		"Text Proposal 1", "Where is the title!?", v1beta1.ProposalTypeText,
 		fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, v1.DefaultMinDepositTokens).String()))
 	s.Require().NoError(err)
@@ -55,20 +54,23 @@ func (s *E2ETestSuite) SetupSuite() {
 	s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, 0))
 
 	// vote for proposal
-	out, err = govclitestutil.MsgVote(val.ClientCtx, val.Address.String(), "1", "yes")
+	out, err = govclitestutil.MsgVote(val.GetClientCtx(), val.GetAddress().String(), "1", "yes")
 	s.Require().NoError(err)
 	s.Require().NoError(clientCtx.Codec.UnmarshalJSON(out.Bytes(), &resp), out.String())
 	s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, 0))
 
-	// create a proposal without deposit
-	out, err = govclitestutil.MsgSubmitLegacyProposal(val.ClientCtx, val.Address.String(),
-		"Text Proposal 2", "Where is the title!?", v1beta1.ProposalTypeText)
+	// create a proposal with a small deposit
+	minimumAcceptedDep := v1.DefaultMinDepositTokens.ToLegacyDec().Mul(v1.DefaultMinDepositRatio).Ceil().TruncateInt()
+	out, err = govclitestutil.MsgSubmitLegacyProposal(val.GetClientCtx(), val.GetAddress().String(),
+		"Text Proposal 2", "Where is the title!?", v1beta1.ProposalTypeText,
+		fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, minimumAcceptedDep).String()))
+
 	s.Require().NoError(err)
 	s.Require().NoError(clientCtx.Codec.UnmarshalJSON(out.Bytes(), &resp), out.String())
 	s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, 0))
 
 	// create a proposal3 with deposit
-	out, err = govclitestutil.MsgSubmitLegacyProposal(val.ClientCtx, val.Address.String(),
+	out, err = govclitestutil.MsgSubmitLegacyProposal(val.GetClientCtx(), val.GetAddress().String(),
 		"Text Proposal 3", "Where is the title!?", v1beta1.ProposalTypeText,
 		fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, v1.DefaultMinDepositTokens).String()))
 	s.Require().NoError(err)
@@ -76,7 +78,7 @@ func (s *E2ETestSuite) SetupSuite() {
 	s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, 0))
 
 	// create a proposal4 with deposit to check the cancel proposal cli tx
-	out, err = govclitestutil.MsgSubmitLegacyProposal(val.ClientCtx, val.Address.String(),
+	out, err = govclitestutil.MsgSubmitLegacyProposal(val.GetClientCtx(), val.GetAddress().String(),
 		"Text Proposal 4", "Where is the title!?", v1beta1.ProposalTypeText,
 		fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, v1.DefaultMinDepositTokens).String()))
 	s.Require().NoError(err)
@@ -84,7 +86,7 @@ func (s *E2ETestSuite) SetupSuite() {
 	s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, 0))
 
 	// vote for proposal3 as val
-	out, err = govclitestutil.MsgVote(val.ClientCtx, val.Address.String(), "3", "yes=0.6,no=0.3,abstain=0.05,no_with_veto=0.05")
+	out, err = govclitestutil.MsgVote(val.GetClientCtx(), val.GetAddress().String(), "3", "yes=0.6,no=0.3,abstain=0.05,no_with_veto=0.05")
 	s.Require().NoError(err)
 	s.Require().NoError(clientCtx.Codec.UnmarshalJSON(out.Bytes(), &resp), out.String())
 	s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, 0))
@@ -96,7 +98,7 @@ func (s *E2ETestSuite) TearDownSuite() {
 }
 
 func (s *E2ETestSuite) TestNewCmdSubmitProposal() {
-	val := s.network.Validators[0]
+	val := s.network.GetValidators()[0]
 
 	// Create a legacy proposal JSON, make sure it doesn't pass this new CLI
 	// command.
@@ -128,7 +130,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitProposal() {
 	"summary": "My awesome description",
 	"metadata": "%s",
 	"deposit": "%s"
-}`, authtypes.NewModuleAddress(types.ModuleName), base64.StdEncoding.EncodeToString(propMetadata), sdk.NewCoin(s.cfg.BondDenom, math.NewInt(5431)))
+}`, authtypes.NewModuleAddress(types.ModuleName), base64.StdEncoding.EncodeToString(propMetadata), sdk.NewCoin(s.cfg.BondDenom, math.NewInt(100000)))
 	validPropFile := testutil.WriteToNewTempFile(s.T(), validProp)
 	defer validPropFile.Close()
 
@@ -152,7 +154,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitProposal() {
 			"valid proposal",
 			[]string{
 				validPropFile.Name(),
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
@@ -166,7 +168,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitProposal() {
 
 		s.Run(tc.name, func() {
 			cmd := cli.NewCmdSubmitProposal()
-			clientCtx := val.ClientCtx
+			clientCtx := val.GetClientCtx()
 
 			out, err := clitestutil.ExecTestCLICmd(clientCtx, cmd, tc.args)
 			if tc.expectErr {
@@ -182,7 +184,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitProposal() {
 }
 
 func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
-	val := s.network.Validators[0]
+	val := s.network.GetValidators()[0]
 	invalidProp := `{
 	  "title": "",
 		"description": "Where is the title!?",
@@ -196,7 +198,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
 		"description": "Hello, World!",
 		"type": "Text",
 	  "deposit": "%s"
-	}`, sdk.NewCoin(s.cfg.BondDenom, math.NewInt(5431)))
+	}`, sdk.NewCoin(s.cfg.BondDenom, math.NewInt(154310)))
 	validPropFile := testutil.WriteToNewTempFile(s.T(), validProp)
 	defer validPropFile.Close()
 
@@ -211,7 +213,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
 			"invalid proposal (file)",
 			[]string{
 				fmt.Sprintf("--%s=%s", cli.FlagProposal, invalidPropFile.Name()), //nolint:staticcheck // we are intentionally using a deprecated flag here.
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
 			},
@@ -222,8 +224,8 @@ func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
 			[]string{
 				fmt.Sprintf("--%s='Where is the title!?'", cli.FlagDescription),        //nolint:staticcheck // we are intentionally using a deprecated flag here.
 				fmt.Sprintf("--%s=%s", cli.FlagProposalType, v1beta1.ProposalTypeText), //nolint:staticcheck // we are intentionally using a deprecated flag here.
-				fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, math.NewInt(5431)).String()),
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10000)).String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
 			},
@@ -234,7 +236,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
 			//nolint:staticcheck // we are intentionally using a deprecated flag here.
 			[]string{
 				fmt.Sprintf("--%s=%s", cli.FlagProposal, validPropFile.Name()),
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
@@ -247,8 +249,8 @@ func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
 				fmt.Sprintf("--%s='Text Proposal'", cli.FlagTitle),
 				fmt.Sprintf("--%s='Where is the title!?'", cli.FlagDescription),        //nolint:staticcheck // we are intentionally using a deprecated flag here.
 				fmt.Sprintf("--%s=%s", cli.FlagProposalType, v1beta1.ProposalTypeText), //nolint:staticcheck // we are intentionally using a deprecated flag here.
-				fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, math.NewInt(5431)).String()),
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", cli.FlagDeposit, sdk.NewCoin(s.cfg.BondDenom, math.NewInt(100000)).String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
@@ -262,7 +264,7 @@ func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
 
 		s.Run(tc.name, func() {
 			cmd := cli.NewCmdSubmitLegacyProposal()
-			clientCtx := val.ClientCtx
+			clientCtx := val.GetClientCtx()
 
 			out, err := clitestutil.ExecTestCLICmd(clientCtx, cmd, tc.args)
 			if tc.expectErr {
@@ -277,271 +279,8 @@ func (s *E2ETestSuite) TestNewCmdSubmitLegacyProposal() {
 	}
 }
 
-func (s *E2ETestSuite) TestNewCmdCancelProposal() {
-	val := s.network.Validators[0]
-	val2 := sdk.AccAddress("invalid_acc_addr")
-
-	testCases := []struct {
-		name         string
-		args         []string
-		expectErr    bool
-		expectedCode uint32
-	}{
-		{
-			"without proposal id",
-			[]string{
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			true, 0,
-		},
-		{
-			"invalid proposal id",
-			[]string{
-				"asdasd",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			true, 0,
-		},
-		{
-			"valid proposal-id but invalid proposer",
-			[]string{
-				"4",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val2),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			true, 0,
-		},
-		{
-			"valid proposer",
-			[]string{
-				"4",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			false, 0,
-		},
-		{
-			"proposal not exists after cancel",
-			[]string{
-				"4",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			false, 1,
-		},
-	}
-
-	for _, tc := range testCases {
-		var resp sdk.TxResponse
-
-		s.Run(tc.name, func() {
-			cmd := cli.NewCmdCancelProposal()
-			clientCtx := val.ClientCtx
-			var balRes banktypes.QueryAllBalancesResponse
-			var newBalance banktypes.QueryAllBalancesResponse
-			if !tc.expectErr && tc.expectedCode == 0 {
-				resp, err := testutil.GetRequest(fmt.Sprintf("%s/cosmos/bank/v1beta1/balances/%s", val.APIAddress, val.Address.String()))
-				s.Require().NoError(err)
-				err = val.ClientCtx.Codec.UnmarshalJSON(resp, &balRes)
-				s.Require().NoError(err)
-			}
-
-			out, err := clitestutil.ExecTestCLICmd(clientCtx, cmd, tc.args)
-			if tc.expectErr {
-				s.Require().Error(err)
-			} else {
-				s.Require().NoError(err)
-				s.Require().NoError(clientCtx.Codec.UnmarshalJSON(out.Bytes(), &resp), out.String())
-				s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, tc.expectedCode))
-
-				if !tc.expectErr && tc.expectedCode == 0 {
-					resp, err := testutil.GetRequest(fmt.Sprintf("%s/cosmos/bank/v1beta1/balances/%s", val.APIAddress, val.Address.String()))
-					s.Require().NoError(err)
-					err = val.ClientCtx.Codec.UnmarshalJSON(resp, &newBalance)
-					s.Require().NoError(err)
-					remainingAmount := v1.DefaultMinDepositTokens.Mul(
-						v1.DefaultProposalCancelRatio.Mul(math.LegacyMustNewDecFromStr("100")).TruncateInt(),
-					).Quo(math.NewIntFromUint64(100))
-
-					// new balance = old balance + remaining amount from proposal deposit - txFee (cancel proposal)
-					txFee := math.NewInt(10)
-					s.Require().True(
-						newBalance.Balances.AmountOf(s.network.Config.BondDenom).Equal(
-							balRes.Balances.AmountOf(s.network.Config.BondDenom).Add(remainingAmount).Sub(txFee),
-						),
-					)
-				}
-			}
-		})
-	}
-}
-
-func (s *E2ETestSuite) TestNewCmdDeposit() {
-	val := s.network.Validators[0]
-
-	testCases := []struct {
-		name         string
-		args         []string
-		expectErr    bool
-		expectedCode uint32
-	}{
-		{
-			"without proposal id",
-			[]string{
-				sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10)).String(), // 10stake
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			true, 0,
-		},
-		{
-			"without deposit amount",
-			[]string{
-				"1",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			true, 0,
-		},
-		{
-			"deposit on non existing proposal",
-			[]string{
-				"10",
-				sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10)).String(), // 10stake
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			false, 1,
-		},
-		{
-			"deposit on existing proposal",
-			[]string{
-				"1",
-				sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10)).String(), // 10stake
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			false, 0,
-		},
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		var resp sdk.TxResponse
-
-		s.Run(tc.name, func() {
-			cmd := cli.NewCmdDeposit()
-			clientCtx := val.ClientCtx
-
-			out, err := clitestutil.ExecTestCLICmd(clientCtx, cmd, tc.args)
-			if tc.expectErr {
-				s.Require().Error(err)
-			} else {
-				s.Require().NoError(err)
-
-				s.Require().NoError(clientCtx.Codec.UnmarshalJSON(out.Bytes(), &resp), out.String())
-				s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, resp.TxHash, tc.expectedCode))
-			}
-		})
-	}
-}
-
-func (s *E2ETestSuite) TestNewCmdVote() {
-	val := s.network.Validators[0]
-
-	testCases := []struct {
-		name         string
-		args         []string
-		expectErr    bool
-		expectedCode uint32
-	}{
-		{
-			"invalid vote",
-			[]string{},
-			true, 0,
-		},
-		{
-			"vote for invalid proposal",
-			[]string{
-				"10",
-				"yes",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--metadata=%s", "AQ=="),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			false, 3,
-		},
-		{
-			"valid vote",
-			[]string{
-				"1",
-				"yes",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			false, 0,
-		},
-		{
-			"valid vote with metadata",
-			[]string{
-				"1",
-				"yes",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
-				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
-				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
-				fmt.Sprintf("--metadata=%s", "AQ=="),
-				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
-			},
-			false, 0,
-		},
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		s.Run(tc.name, func() {
-			cmd := cli.NewCmdVote()
-			clientCtx := val.ClientCtx
-			var txResp sdk.TxResponse
-
-			out, err := clitestutil.ExecTestCLICmd(clientCtx, cmd, tc.args)
-
-			if tc.expectErr {
-				s.Require().Error(err)
-			} else {
-				s.Require().NoError(err)
-				s.Require().NoError(clientCtx.Codec.UnmarshalJSON(out.Bytes(), &txResp), out.String())
-				s.Require().NoError(clitestutil.CheckTxCode(s.network, clientCtx, txResp.TxHash, tc.expectedCode))
-			}
-		})
-	}
-}
-
 func (s *E2ETestSuite) TestNewCmdWeightedVote() {
-	val := s.network.Validators[0]
+	val := s.network.GetValidators()[0]
 
 	testCases := []struct {
 		name         string
@@ -559,7 +298,7 @@ func (s *E2ETestSuite) TestNewCmdWeightedVote() {
 			[]string{
 				"10",
 				"yes",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
@@ -571,7 +310,7 @@ func (s *E2ETestSuite) TestNewCmdWeightedVote() {
 			[]string{
 				"1",
 				"yes",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
@@ -583,7 +322,7 @@ func (s *E2ETestSuite) TestNewCmdWeightedVote() {
 			[]string{
 				"1",
 				"yes",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--metadata=%s", "AQ=="),
@@ -596,7 +335,7 @@ func (s *E2ETestSuite) TestNewCmdWeightedVote() {
 			[]string{
 				"1",
 				"yes/0.6,no/0.3,abstain/0.05,no_with_veto/0.05",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
@@ -608,7 +347,7 @@ func (s *E2ETestSuite) TestNewCmdWeightedVote() {
 			[]string{
 				"1",
 				"yes=0.6,no=0.3,abstain=0.05,no_with_veto=0.05",
-				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.Address.String()),
+				fmt.Sprintf("--%s=%s", flags.FlagFrom, val.GetAddress().String()),
 				fmt.Sprintf("--%s=true", flags.FlagSkipConfirmation),
 				fmt.Sprintf("--%s=%s", flags.FlagBroadcastMode, flags.BroadcastSync),
 				fmt.Sprintf("--%s=%s", flags.FlagFees, sdk.NewCoins(sdk.NewCoin(s.cfg.BondDenom, math.NewInt(10))).String()),
@@ -621,7 +360,7 @@ func (s *E2ETestSuite) TestNewCmdWeightedVote() {
 		tc := tc
 		s.Run(tc.name, func() {
 			cmd := cli.NewCmdWeightedVote()
-			clientCtx := val.ClientCtx
+			clientCtx := val.GetClientCtx()
 			var txResp sdk.TxResponse
 
 			out, err := clitestutil.ExecTestCLICmd(clientCtx, cmd, tc.args)

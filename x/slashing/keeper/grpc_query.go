@@ -7,10 +7,10 @@ import (
 	"google.golang.org/grpc/status"
 
 	"cosmossdk.io/store/prefix"
+	"cosmossdk.io/x/slashing/types"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/types/query"
-	"github.com/cosmos/cosmos-sdk/x/slashing/types"
 )
 
 var _ types.QueryServer = Querier{}
@@ -62,7 +62,7 @@ func (k Keeper) SigningInfos(ctx context.Context, req *types.QuerySigningInfosRe
 		return nil, status.Errorf(codes.InvalidArgument, "empty request")
 	}
 
-	store := k.storeService.OpenKVStore(ctx)
+	store := k.environment.KVStoreService.OpenKVStore(ctx)
 	var signInfos []types.ValidatorSigningInfo
 
 	sigInfoStore := prefix.NewStore(runtime.KVStoreAdapter(store), types.ValidatorSigningInfoKeyPrefix)

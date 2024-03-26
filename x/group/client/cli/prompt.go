@@ -9,12 +9,14 @@ import (
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 
+	"cosmossdk.io/core/address"
+	govcli "cosmossdk.io/x/gov/client/cli"
+	govtypes "cosmossdk.io/x/gov/types"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	govcli "github.com/cosmos/cosmos-sdk/x/gov/client/cli"
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 )
 
 const (
@@ -30,9 +32,9 @@ type proposalType struct {
 }
 
 // Prompt the proposal type values and return the proposal and its metadata.
-func (p *proposalType) Prompt(cdc codec.Codec, skipMetadata bool) (*Proposal, govtypes.ProposalMetadata, error) {
+func (p *proposalType) Prompt(cdc codec.Codec, skipMetadata bool, addressCodec address.Codec) (*Proposal, govtypes.ProposalMetadata, error) {
 	// set metadata
-	metadata, err := govcli.PromptMetadata(skipMetadata)
+	metadata, err := govcli.PromptMetadata(skipMetadata, addressCodec)
 	if err != nil {
 		return nil, metadata, fmt.Errorf("failed to set proposal metadata: %w", err)
 	}
@@ -70,7 +72,7 @@ func (p *proposalType) Prompt(cdc codec.Codec, skipMetadata bool) (*Proposal, go
 	}
 
 	// set messages field
-	result, err := govcli.Prompt(p.Msg, "msg")
+	result, err := govcli.Prompt(p.Msg, "msg", addressCodec)
 	if err != nil {
 		return nil, metadata, fmt.Errorf("failed to set proposal message: %w", err)
 	}
@@ -141,7 +143,7 @@ func NewCmdDraftProposal() *cobra.Command {
 
 			skipMetadataPrompt, _ := cmd.Flags().GetBool(flagSkipMetadata)
 
-			result, metadata, err := proposal.Prompt(clientCtx.Codec, skipMetadataPrompt)
+			result, metadata, err := proposal.Prompt(clientCtx.Codec, skipMetadataPrompt, clientCtx.AddressCodec)
 			if err != nil {
 				return err
 			}

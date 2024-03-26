@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	signingv1beta1 "cosmossdk.io/api/cosmos/tx/signing/v1beta1"
+	"cosmossdk.io/x/auth/signing"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	kmultisig "github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
@@ -15,7 +16,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
-	"github.com/cosmos/cosmos-sdk/x/auth/signing"
 )
 
 // TxConfigTestSuite provides a test suite that can be used to test that a TxConfig implementation is correct.
@@ -318,7 +318,9 @@ func (s *TxConfigTestSuite) TestWrapTxBuilder() {
 	err := txBuilder.SetMsgs(msg)
 	s.Require().NoError(err)
 
-	newTxBldr, err := s.TxConfig.WrapTxBuilder(txBuilder.GetTx())
+	tx := txBuilder.GetTx()
+	newTxBldr, err := s.TxConfig.WrapTxBuilder(tx)
 	s.Require().NoError(err)
-	s.Require().Equal(txBuilder, newTxBldr)
+	txBuilder.SetFeePayer(tx.FeePayer()) // NOTE: fee payer will be populated even if empty.
+	s.Require().Equal(txBuilder.GetTx(), newTxBldr.GetTx())
 }

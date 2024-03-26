@@ -5,11 +5,13 @@ Usage:
   test [command]
 
 Available Commands:
-  completion    Generate the autocompletion script for the specified shell
-  deprecatedmsg Tx commands for the testpb.Msg service
-  help          Help about any command
-  send          send msg the value provided by the user
-  skipmsg       Tx commands for the testpb.Msg service
+  burn             Execute the Burn RPC method
+  completion       Generate the autocompletion script for the specified shell
+  help             Help about any command
+  multi-send       Execute the MultiSend RPC method
+  send             Send coins from one account to another
+  set-send-enabled Execute the SetSendEnabled RPC method
+  update-params    Execute the UpdateParams RPC method
 
 Flags:
   -h, --help   help for test

@@ -4,16 +4,18 @@ import (
 	"fmt"
 
 	cmttypes "github.com/cometbft/cometbft/types"
+	gogotypes "github.com/cosmos/gogoproto/types"
+
+	"cosmossdk.io/x/staking/keeper"
+	"cosmossdk.io/x/staking/types"
 
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // WriteValidators returns a slice of bonded genesis validators.
 func WriteValidators(ctx sdk.Context, keeper *keeper.Keeper) (vals []cmttypes.GenesisValidator, returnErr error) {
-	err := keeper.LastValidatorPower.Walk(ctx, nil, func(key, value []byte) (bool, error) {
+	err := keeper.LastValidatorPower.Walk(ctx, nil, func(key []byte, _ gogotypes.Int64Value) (bool, error) {
 		validator, err := keeper.GetValidator(ctx, key)
 		if err != nil {
 			return true, err

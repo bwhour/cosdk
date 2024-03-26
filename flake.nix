@@ -1,18 +1,28 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/master";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     gomod2nix = {
       url = "github:nix-community/gomod2nix";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.utils.follows = "flake-utils";
+      inputs.flake-utils.follows = "flake-utils";
     };
   };
 
-  outputs = { self, nixpkgs, gomod2nix, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, ... }@inputs:
     {
-      overlays.default = pkgs: _: {
-        simd = pkgs.callPackage ./simapp { rev = self.shortRev or "dev"; };
+      overlays.default = self: super: rec {
+        simd = self.callPackage ./simapp { rev = self.shortRev or "dev"; };
+        go = simd.go; # to build the tools (e.g. gomod2nix) using the same go version
+        rocksdb = super.rocksdb.overrideAttrs (_: rec {
+          version = "8.11.3";
+          src = self.fetchFromGitHub {
+            owner = "facebook";
+            repo = "rocksdb";
+            rev = "v${version}";
+            sha256 = "sha256-OpEiMwGxZuxb9o3RQuSrwZMQGLhe9xLT1aa3HpI4KPs=";
+          };
+        });
       };
     } //
     (flake-utils.lib.eachDefaultSystem
@@ -26,7 +36,7 @@
             inherit system;
             config = { };
             overlays = [
-              gomod2nix.overlays.default
+              inputs.gomod2nix.overlays.default
               self.overlays.default
             ];
           };
@@ -41,11 +51,11 @@
             simd = mkApp pkgs.simd;
           };
           devShells = rec {
-            default = simd;
-            simd = with pkgs; mkShell {
+            default = with pkgs; mkShell {
               buildInputs = [
-                go_1_21 # Use Go 1.21 version
+                simd.go
                 rocksdb
+                gomod2nix
               ];
             };
           };

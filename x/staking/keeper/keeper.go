@@ -1,20 +1,22 @@
 package keeper
 
 import (
-	"context"
 	"fmt"
 	"time"
 
+	gogotypes "github.com/cosmos/gogoproto/types"
+
 	"cosmossdk.io/collections"
 	collcodec "cosmossdk.io/collections/codec"
+	"cosmossdk.io/collections/indexes"
 	addresscodec "cosmossdk.io/core/address"
-	storetypes "cosmossdk.io/core/store"
+	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	"cosmossdk.io/x/staking/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // Implements ValidatorSet interface
@@ -23,9 +25,50 @@ var _ types.ValidatorSet = Keeper{}
 // Implements DelegationSet interface
 var _ types.DelegationSet = Keeper{}
 
+func HistoricalInfoCodec(cdc codec.BinaryCodec) collcodec.ValueCodec[types.HistoricalRecord] {
+	return collcodec.NewAltValueCodec(codec.CollValue[types.HistoricalRecord](cdc), func(b []byte) (types.HistoricalRecord, error) {
+		historicalinfo := types.HistoricalInfo{} //nolint: staticcheck // HistoricalInfo is deprecated
+		err := historicalinfo.Unmarshal(b)
+		if err != nil {
+			return types.HistoricalRecord{}, err
+		}
+
+		return types.HistoricalRecord{
+			Apphash:        historicalinfo.Header.AppHash,
+			Time:           &historicalinfo.Header.Time,
+			ValidatorsHash: historicalinfo.Header.NextValidatorsHash,
+		}, nil
+	})
+}
+
+type rotationHistoryIndexes struct {
+	Block *indexes.Multi[uint64, collections.Pair[[]byte, uint64], types.ConsPubKeyRotationHistory]
+}
+
+func (a rotationHistoryIndexes) IndexesList() []collections.Index[collections.Pair[[]byte, uint64], types.ConsPubKeyRotationHistory] {
+	return []collections.Index[collections.Pair[[]byte, uint64], types.ConsPubKeyRotationHistory]{
+		a.Block,
+	}
+}
+
+func NewRotationHistoryIndexes(sb *collections.SchemaBuilder) rotationHistoryIndexes {
+	return rotationHistoryIndexes{
+		Block: indexes.NewMulti(
+			sb,
+			types.BlockConsPubKeyRotationHistoryKey,
+			"cons_pubkey_history_by_block",
+			collections.Uint64Key,
+			collections.PairKeyCodec(collections.BytesKey, collections.Uint64Key),
+			func(key collections.Pair[[]byte, uint64], v types.ConsPubKeyRotationHistory) (uint64, error) {
+				return v.Height, nil
+			},
+		),
+	}
+}
+
 // Keeper of the x/staking store
 type Keeper struct {
-	storeService          storetypes.KVStoreService
+	environment           appmodule.Environment
 	cdc                   codec.BinaryCodec
 	authKeeper            types.AccountKeeper
 	bankKeeper            types.BankKeeper
@@ -34,37 +77,71 @@ type Keeper struct {
 	validatorAddressCodec addresscodec.Codec
 	consensusAddressCodec addresscodec.Codec
 
-	Schema                        collections.Schema
-	HistoricalInfo                collections.Map[uint64, types.HistoricalInfo]
-	LastTotalPower                collections.Item[math.Int]
-	ValidatorUpdates              collections.Item[types.ValidatorUpdates]
-	DelegationsByValidator        collections.Map[collections.Pair[sdk.ValAddress, sdk.AccAddress], []byte]
-	UnbondingID                   collections.Sequence
-	ValidatorByConsensusAddress   collections.Map[sdk.ConsAddress, sdk.ValAddress]
-	UnbondingType                 collections.Map[uint64, uint64]
-	Redelegations                 collections.Map[collections.Triple[[]byte, []byte, []byte], types.Redelegation]
-	Delegations                   collections.Map[collections.Pair[sdk.AccAddress, sdk.ValAddress], types.Delegation]
-	UnbondingIndex                collections.Map[uint64, []byte]
-	UnbondingQueue                collections.Map[time.Time, types.DVPairs]
-	Validators                    collections.Map[[]byte, types.Validator]
-	UnbondingDelegations          collections.Map[collections.Pair[[]byte, []byte], types.UnbondingDelegation]
-	RedelegationsByValDst         collections.Map[collections.Triple[[]byte, []byte, []byte], []byte]
-	RedelegationsByValSrc         collections.Map[collections.Triple[[]byte, []byte, []byte], []byte]
+	Schema collections.Schema
+
+	// HistoricalInfo key: Height | value: HistoricalInfo
+	HistoricalInfo collections.Map[uint64, types.HistoricalRecord]
+	// LastTotalPower value: LastTotalPower
+	LastTotalPower collections.Item[math.Int]
+	// ValidatorUpdates value: ValidatorUpdates
+	ValidatorUpdates collections.Item[types.ValidatorUpdates]
+	// DelegationsByValidator key: valAddr+delAddr | value: none used (index key for delegations by validator index)
+	DelegationsByValidator collections.Map[collections.Pair[sdk.ValAddress, sdk.AccAddress], []byte]
+	UnbondingID            collections.Sequence
+	// ValidatorByConsensusAddress key: consAddr | value: valAddr
+	ValidatorByConsensusAddress collections.Map[sdk.ConsAddress, sdk.ValAddress]
+	// UnbondingType key: unbondingID | value: index of UnbondingType
+	UnbondingType collections.Map[uint64, uint64]
+	// Redelegations key: AccAddr+SrcValAddr+DstValAddr | value: Redelegation
+	Redelegations collections.Map[collections.Triple[[]byte, []byte, []byte], types.Redelegation]
+	// Delegations key: AccAddr+valAddr | value: Delegation
+	Delegations collections.Map[collections.Pair[sdk.AccAddress, sdk.ValAddress], types.Delegation]
+	// UnbondingIndex key:UnbondingID | value: ubdKey (ubdKey = [UnbondingDelegationKey(Prefix)+len(delAddr)+delAddr+len(valAddr)+valAddr])
+	UnbondingIndex collections.Map[uint64, []byte]
+	// UnbondingQueue key: Timestamp | value: DVPairs [delAddr+valAddr]
+	UnbondingQueue collections.Map[time.Time, types.DVPairs]
+	// Validators key: valAddr | value: Validator
+	Validators collections.Map[[]byte, types.Validator]
+	// UnbondingDelegations key: delAddr+valAddr | value: UnbondingDelegation
+	UnbondingDelegations collections.Map[collections.Pair[[]byte, []byte], types.UnbondingDelegation]
+	// RedelegationsByValDst key: DstValAddr+DelAccAddr+SrcValAddr | value: none used (index key for Redelegations stored by DstVal index)
+	RedelegationsByValDst collections.Map[collections.Triple[[]byte, []byte, []byte], []byte]
+	// RedelegationsByValSrc key: SrcValAddr+DelAccAddr+DstValAddr |  value: none used (index key for Redelegations stored by SrcVal index)
+	RedelegationsByValSrc collections.Map[collections.Triple[[]byte, []byte, []byte], []byte]
+	// UnbondingDelegationByValIndex key: valAddr+delAddr | value: none used (index key for UnbondingDelegations stored by validator index)
 	UnbondingDelegationByValIndex collections.Map[collections.Pair[[]byte, []byte], []byte]
-	LastValidatorPower            collections.Map[[]byte, []byte]
+	// RedelegationQueue key: Timestamp | value: DVVTriplets [delAddr+valSrcAddr+valDstAddr]
+	RedelegationQueue collections.Map[time.Time, types.DVVTriplets]
+	// ValidatorQueue key: len(timestamp bytes)+timestamp+height | value: ValAddresses
+	ValidatorQueue collections.Map[collections.Triple[uint64, time.Time, uint64], types.ValAddresses]
+	// LastValidatorPower key: valAddr | value: power(gogotypes.Int64Value())
+	LastValidatorPower collections.Map[[]byte, gogotypes.Int64Value]
+	// Params key: ParamsKeyPrefix | value: Params
+	Params collections.Item[types.Params]
+	// ValidatorConsensusKeyRotationRecordIndexKey: this key is used to restrict the validator next rotation within waiting (unbonding) period
+	ValidatorConsensusKeyRotationRecordIndexKey collections.KeySet[collections.Pair[[]byte, time.Time]]
+	// ValidatorConsensusKeyRotationRecordQueue: this key is used to set the unbonding period time on each rotation
+	ValidatorConsensusKeyRotationRecordQueue collections.Map[time.Time, types.ValAddrsOfRotatedConsKeys]
+	// NewToOldConsKeyMap: prefix for rotated old cons address to new cons address
+	NewToOldConsKeyMap collections.Map[[]byte, []byte]
+	// OldToNewConsKeyMap: prefix for rotated new cons address to old cons address
+	OldToNewConsKeyMap collections.Map[[]byte, []byte]
+	// ValidatorConsPubKeyRotationHistory: consPubkey rotation history by validator
+	// A index is being added with key `BlockConsPubKeyRotationHistory`: consPubkey rotation history by height
+	RotationHistory *collections.IndexedMap[collections.Pair[[]byte, uint64], types.ConsPubKeyRotationHistory, rotationHistoryIndexes]
 }
 
 // NewKeeper creates a new staking Keeper instance
 func NewKeeper(
 	cdc codec.BinaryCodec,
-	storeService storetypes.KVStoreService,
+	env appmodule.Environment,
 	ak types.AccountKeeper,
 	bk types.BankKeeper,
 	authority string,
 	validatorAddressCodec addresscodec.Codec,
 	consensusAddressCodec addresscodec.Codec,
 ) *Keeper {
-	sb := collections.NewSchemaBuilder(storeService)
+	sb := collections.NewSchemaBuilder(env.KVStoreService)
 	// ensure bonded and not bonded module accounts are set
 	if addr := ak.GetModuleAddress(types.BondedPoolName); addr == nil {
 		panic(fmt.Sprintf("%s module account has not been set", types.BondedPoolName))
@@ -84,7 +161,7 @@ func NewKeeper(
 	}
 
 	k := &Keeper{
-		storeService:          storeService,
+		environment:           env,
 		cdc:                   cdc,
 		authKeeper:            ak,
 		bankKeeper:            bk,
@@ -93,27 +170,27 @@ func NewKeeper(
 		validatorAddressCodec: validatorAddressCodec,
 		consensusAddressCodec: consensusAddressCodec,
 		LastTotalPower:        collections.NewItem(sb, types.LastTotalPowerKey, "last_total_power", sdk.IntValue),
-		HistoricalInfo:        collections.NewMap(sb, types.HistoricalInfoKey, "historical_info", collections.Uint64Key, codec.CollValue[types.HistoricalInfo](cdc)),
+		HistoricalInfo:        collections.NewMap(sb, types.HistoricalInfoKey, "historical_info", collections.Uint64Key, HistoricalInfoCodec(cdc)),
 		ValidatorUpdates:      collections.NewItem(sb, types.ValidatorUpdatesKey, "validator_updates", codec.CollValue[types.ValidatorUpdates](cdc)),
 		Delegations: collections.NewMap(
 			sb, types.DelegationKey, "delegations",
 			collections.PairKeyCodec(
-				sdk.LengthPrefixedAddressKey(sdk.AccAddressKey), // nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
-				sdk.LengthPrefixedAddressKey(sdk.ValAddressKey), // nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
+				sdk.LengthPrefixedAddressKey(sdk.AccAddressKey), //nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
+				sdk.LengthPrefixedAddressKey(sdk.ValAddressKey), //nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
 			),
 			codec.CollValue[types.Delegation](cdc),
 		),
 		DelegationsByValidator: collections.NewMap(
 			sb, types.DelegationByValIndexKey,
 			"delegations_by_validator",
-			collections.PairKeyCodec(sdk.LengthPrefixedAddressKey(sdk.ValAddressKey), sdk.AccAddressKey), // nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
+			collections.PairKeyCodec(sdk.LengthPrefixedAddressKey(sdk.ValAddressKey), sdk.AccAddressKey), //nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
 			collections.BytesValue,
 		),
 		UnbondingID: collections.NewSequence(sb, types.UnbondingIDKey, "unbonding_id"),
 		ValidatorByConsensusAddress: collections.NewMap(
 			sb, types.ValidatorsByConsAddrKey,
 			"validator_by_cons_addr",
-			sdk.LengthPrefixedAddressKey(sdk.ConsAddressKey), // nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
+			sdk.LengthPrefixedAddressKey(sdk.ConsAddressKey), //nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
 			collcodec.KeyToValueCodec(sdk.ValAddressKey),
 		),
 		UnbondingType: collections.NewMap(sb, types.UnbondingTypeKey, "unbonding_type", collections.Uint64Key, collections.Uint64Value),
@@ -147,7 +224,8 @@ func NewKeeper(
 			),
 			collections.BytesValue,
 		),
-		LastValidatorPower: collections.NewMap(sb, types.LastValidatorPowerKey, "last_validator_power", sdk.LengthPrefixedBytesKey, collections.BytesValue), // sdk.LengthPrefixedBytesKey is needed to retain state compatibility
+		// key format is: 17 | lengthPrefixedBytes(valAddr) | power
+		LastValidatorPower: collections.NewMap(sb, types.LastValidatorPowerKey, "last_validator_power", sdk.LengthPrefixedBytesKey, codec.CollValue[gogotypes.Int64Value](cdc)), // sdk.LengthPrefixedBytesKey is needed to retain state compatibility
 		// key format is: 54 | lengthPrefixedBytes(DstValAddr) | lengthPrefixedBytes(AccAddr) | lengthPrefixedBytes(SrcValAddr)
 		RedelegationsByValDst: collections.NewMap(
 			sb, types.RedelegationByValDstIndexKey,
@@ -159,7 +237,8 @@ func NewKeeper(
 			),
 			collections.BytesValue,
 		),
-		Validators: collections.NewMap(sb, types.ValidatorsKey, "validators", sdk.LengthPrefixedBytesKey, codec.CollValue[types.Validator](cdc)), // sdk.LengthPrefixedBytesKey is needed to retain state compatibility
+		RedelegationQueue: collections.NewMap(sb, types.RedelegationQueueKey, "redelegation_queue", sdk.TimeKey, codec.CollValue[types.DVVTriplets](cdc)),
+		Validators:        collections.NewMap(sb, types.ValidatorsKey, "validators", sdk.LengthPrefixedBytesKey, codec.CollValue[types.Validator](cdc)), // sdk.LengthPrefixedBytesKey is needed to retain state compatibility
 		UnbondingDelegations: collections.NewMap(
 			sb, types.UnbondingDelegationKey,
 			"unbonding_delegation",
@@ -167,7 +246,64 @@ func NewKeeper(
 				collections.BytesKey,
 				sdk.LengthPrefixedBytesKey, // sdk.LengthPrefixedBytesKey is needed to retain state compatibility
 			),
-			codec.CollValue[types.UnbondingDelegation](cdc)),
+			codec.CollValue[types.UnbondingDelegation](cdc),
+		),
+		// key format is: 67 | length(timestamp Bytes) | timestamp | height
+		// Note: We use 3 keys here because we prefixed time bytes with its length previously and to retain state compatibility we remain to use the same
+		ValidatorQueue: collections.NewMap(
+			sb, types.ValidatorQueueKey,
+			"validator_queue",
+			collections.TripleKeyCodec(
+				collections.Uint64Key,
+				sdk.TimeKey,
+				collections.Uint64Key,
+			),
+			codec.CollValue[types.ValAddresses](cdc),
+		),
+		// key is: 113 (it's a direct prefix)
+		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+
+		// key format is: 104 | valAddr | time
+		ValidatorConsensusKeyRotationRecordIndexKey: collections.NewKeySet(
+			sb, types.ValidatorConsensusKeyRotationRecordIndexKey,
+			"cons_pub_rotation_index",
+			collections.PairKeyCodec(collections.BytesKey, sdk.TimeKey),
+		),
+
+		// key format is: 103 | time
+		ValidatorConsensusKeyRotationRecordQueue: collections.NewMap(
+			sb, types.ValidatorConsensusKeyRotationRecordQueueKey,
+			"cons_pub_rotation_queue",
+			sdk.TimeKey,
+			codec.CollValue[types.ValAddrsOfRotatedConsKeys](cdc),
+		),
+
+		// key format is: 105 | consAddr
+		NewToOldConsKeyMap: collections.NewMap(
+			sb, types.NewToOldConsKeyMap,
+			"new_to_old_cons_key_map",
+			collections.BytesKey,
+			collections.BytesValue,
+		),
+
+		// key format is: 106 | consAddr
+		OldToNewConsKeyMap: collections.NewMap(
+			sb, types.OldToNewConsKeyMap,
+			"old_to_new_cons_key_map",
+			collections.BytesKey,
+			collections.BytesValue,
+		),
+
+		// key format is : 101 | rotation history
+		// index is : 102 | rotation history
+		RotationHistory: collections.NewIndexedMap(
+			sb,
+			types.ValidatorConsPubKeyRotationHistoryKey,
+			"cons_pub_rotation_history",
+			collections.PairKeyCodec(collections.BytesKey, collections.Uint64Key),
+			codec.CollValue[types.ConsPubKeyRotationHistory](cdc),
+			NewRotationHistoryIndexes(sb),
+		),
 	}
 
 	schema, err := sb.Build()
@@ -179,9 +315,8 @@ func NewKeeper(
 }
 
 // Logger returns a module-specific logger.
-func (k Keeper) Logger(ctx context.Context) log.Logger {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	return sdkCtx.Logger().With("module", "x/"+types.ModuleName)
+func (k Keeper) Logger() log.Logger {
+	return k.environment.Logger.With("module", "x/"+types.ModuleName)
 }
 
 // Hooks gets the hooks for staking *Keeper {

@@ -25,8 +25,7 @@ import (
 // TODO: Some of the invalid constraints listed above may need to be reconsidered
 // in the case of a lunatic attack.
 func (k Keeper) handleEquivocationEvidence(ctx context.Context, evidence *types.Equivocation) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	logger := k.Logger(ctx)
+	logger := k.Logger()
 	consAddr := evidence.GetConsensusAddress(k.stakingKeeper.ConsensusAddressCodec())
 
 	validator, err := k.stakingKeeper.ValidatorByConsAddr(ctx, consAddr)
@@ -40,6 +39,15 @@ func (k Keeper) handleEquivocationEvidence(ctx context.Context, evidence *types.
 	}
 
 	if len(validator.GetOperator()) != 0 {
+		// Get the consAddr from the validator read from the store and not from the evidence,
+		// because if the validator has rotated its key, the key in evidence could be outdated.
+		// (ValidatorByConsAddr can get a validator even if the key has been rotated)
+		valConsAddr, err := validator.GetConsAddr()
+		if err != nil {
+			return err
+		}
+		consAddr = valConsAddr
+
 		if _, err := k.slashingKeeper.GetPubkey(ctx, consAddr.Bytes()); err != nil {
 			// Ignore evidence that cannot be handled.
 			//
@@ -55,16 +63,18 @@ func (k Keeper) handleEquivocationEvidence(ctx context.Context, evidence *types.
 		}
 	}
 
+	headerInfo := k.environment.HeaderService.GetHeaderInfo(ctx)
 	// calculate the age of the evidence
 	infractionHeight := evidence.GetHeight()
 	infractionTime := evidence.GetTime()
-	ageDuration := sdkCtx.BlockHeader().Time.Sub(infractionTime)
-	ageBlocks := sdkCtx.BlockHeader().Height - infractionHeight
+	ageDuration := headerInfo.Time.Sub(infractionTime)
+	ageBlocks := headerInfo.Height - infractionHeight
 
 	// Reject evidence if the double-sign is too old. Evidence is considered stale
 	// if the difference in time and number of blocks is greater than the allowed
 	// parameters defined.
-	cp := sdkCtx.ConsensusParams()
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cp := sdkCtx.ConsensusParams() // TODO: remove in favor of querying consensus module
 	if cp.Evidence != nil {
 		if ageDuration > cp.Evidence.MaxAgeDuration && ageBlocks > cp.Evidence.MaxAgeNumBlocks {
 			logger.Info(

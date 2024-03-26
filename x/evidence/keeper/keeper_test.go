@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/suite"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/core/header"
+	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
 	"cosmossdk.io/x/evidence"
 	"cosmossdk.io/x/evidence/exported"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -77,16 +79,15 @@ type KeeperTestSuite struct {
 	accountKeeper  *evidencetestutil.MockAccountKeeper
 	slashingKeeper *evidencetestutil.MockSlashingKeeper
 	stakingKeeper  *evidencetestutil.MockStakingKeeper
-	blockInfo      *evidencetestutil.MockCometinfo
 	queryClient    types.QueryClient
 	encCfg         moduletestutil.TestEncodingConfig
 	msgServer      types.MsgServer
 }
 
 func (suite *KeeperTestSuite) SetupTest() {
-	encCfg := moduletestutil.MakeTestEncodingConfig(evidence.AppModuleBasic{})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, evidence.AppModule{})
 	key := storetypes.NewKVStoreKey(types.StoreKey)
-	storeService := runtime.NewKVStoreService(key)
+	env := runtime.NewEnvironment(runtime.NewKVStoreService(key), log.NewNopLogger())
 	tkey := storetypes.NewTransientStoreKey("evidence_transient_store")
 	testCtx := testutil.DefaultContextWithDB(suite.T(), key, tkey)
 	suite.ctx = testCtx.Ctx
@@ -97,15 +98,13 @@ func (suite *KeeperTestSuite) SetupTest() {
 	slashingKeeper := evidencetestutil.NewMockSlashingKeeper(ctrl)
 	accountKeeper := evidencetestutil.NewMockAccountKeeper(ctrl)
 	bankKeeper := evidencetestutil.NewMockBankKeeper(ctrl)
-	suite.blockInfo = &evidencetestutil.MockCometinfo{}
 
 	evidenceKeeper := keeper.NewKeeper(
 		encCfg.Codec,
-		storeService,
+		env,
 		stakingKeeper,
 		slashingKeeper,
 		address.NewBech32Codec("cosmos"),
-		&evidencetestutil.MockCometinfo{},
 	)
 
 	suite.stakingKeeper = stakingKeeper
@@ -116,8 +115,8 @@ func (suite *KeeperTestSuite) SetupTest() {
 	router = router.AddRoute(types.RouteEquivocation, testEquivocationHandler(evidenceKeeper))
 	evidenceKeeper.SetRouter(router)
 
-	suite.ctx = testCtx.Ctx.WithBlockHeader(cmtproto.Header{Height: 1})
-	suite.encCfg = moduletestutil.MakeTestEncodingConfig(evidence.AppModuleBasic{})
+	suite.ctx = testCtx.Ctx.WithHeaderInfo(header.Info{Height: 1})
+	suite.encCfg = moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, evidence.AppModule{})
 
 	suite.accountKeeper = accountKeeper
 
@@ -127,7 +126,7 @@ func (suite *KeeperTestSuite) SetupTest() {
 	suite.evidenceKeeper = *evidenceKeeper
 
 	suite.Require().Equal(testCtx.Ctx.Logger().With("module", "x/"+types.ModuleName),
-		suite.evidenceKeeper.Logger(testCtx.Ctx))
+		suite.evidenceKeeper.Logger())
 
 	suite.msgServer = keeper.NewMsgServerImpl(suite.evidenceKeeper)
 }

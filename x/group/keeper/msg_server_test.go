@@ -11,16 +11,21 @@ import (
 	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/golang/mock/gomock"
 
+	"cosmossdk.io/core/header"
+	"cosmossdk.io/log"
+	storetypes "cosmossdk.io/store/types"
+	banktypes "cosmossdk.io/x/bank/types"
+	"cosmossdk.io/x/group"
+	"cosmossdk.io/x/group/internal/math"
+	"cosmossdk.io/x/group/keeper"
+	minttypes "cosmossdk.io/x/mint/types"
+
 	"github.com/cosmos/cosmos-sdk/codec/address"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/cosmos-sdk/x/group"
-	"github.com/cosmos/cosmos-sdk/x/group/internal/math"
-	"github.com/cosmos/cosmos-sdk/x/group/keeper"
-	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
 )
 
 var EventProposalPruned = "cosmos.group.v1.EventProposalPruned"
@@ -103,14 +108,14 @@ func (s *TestSuite) TestCreateGroup() {
 			},
 			expGroups: expGroups,
 		},
-		"group metadata too long": {
+		"group metadata: metadata too long": {
 			req: &group.MsgCreateGroup{
 				Admin:    addr1.String(),
 				Members:  members,
 				Metadata: strings.Repeat("a", 256),
 			},
 			expErr:    true,
-			expErrMsg: "group metadata: limit exceeded",
+			expErrMsg: "group metadata: metadata too long",
 		},
 		"invalid member address": {
 			req: &group.MsgCreateGroup{
@@ -133,7 +138,7 @@ func (s *TestSuite) TestCreateGroup() {
 				}},
 			},
 			expErr:    true,
-			expErrMsg: "metadata: limit exceeded",
+			expErrMsg: "metadata too long",
 		},
 		"zero member weight": {
 			req: &group.MsgCreateGroup{
@@ -174,7 +179,7 @@ func (s *TestSuite) TestCreateGroup() {
 	for msg, spec := range specs {
 		spec := spec
 		s.Run(msg, func() {
-			blockTime := sdk.UnwrapSDKContext(s.ctx).BlockTime()
+			blockTime := sdk.UnwrapSDKContext(s.ctx).HeaderInfo().Time
 			res, err := s.groupKeeper.CreateGroup(s.ctx, spec.req)
 			if spec.expErr {
 				s.Require().Error(err)
@@ -305,12 +310,12 @@ func (s *TestSuite) TestUpdateGroupMembers() {
 					{
 						Address:  member2,
 						Weight:   "2",
-						Metadata: strings.Repeat("a", 256),
+						Metadata: strings.Repeat("a", 10240),
 					},
 				},
 			},
 			expErr:    true,
-			expErrMsg: "group member metadata: limit exceeded",
+			expErrMsg: "members updated: group member metadata: metadata too lon",
 		},
 		"add new member": {
 			req: &group.MsgUpdateGroupMembers{
@@ -333,7 +338,7 @@ func (s *TestSuite) TestUpdateGroupMembers() {
 					Member: &group.Member{
 						Address: member2,
 						Weight:  "2",
-						AddedAt: s.sdkCtx.BlockTime(),
+						AddedAt: s.sdkCtx.HeaderInfo().Time,
 					},
 					GroupId: groupID,
 				},
@@ -428,7 +433,7 @@ func (s *TestSuite) TestUpdateGroupMembers() {
 				Member: &group.Member{
 					Address: member2,
 					Weight:  "1",
-					AddedAt: s.sdkCtx.BlockTime(),
+					AddedAt: s.sdkCtx.HeaderInfo().Time,
 				},
 			}},
 		},
@@ -661,6 +666,15 @@ func (s *TestSuite) TestUpdateGroupAdmin() {
 				CreatedAt:   s.blockTime,
 			},
 		},
+		"with invalid new admin address": {
+			req: &group.MsgUpdateGroupAdmin{
+				GroupId:  groupID,
+				Admin:    oldAdmin,
+				NewAdmin: "%s",
+			},
+			expErr:    true,
+			expErrMsg: "new admin address",
+		},
 	}
 	for msg, spec := range specs {
 		spec := spec
@@ -825,9 +839,9 @@ func (s *TestSuite) TestCreateGroupWithPolicy() {
 				0,
 			),
 			expErr:    true,
-			expErrMsg: "group metadata: limit exceeded",
+			expErrMsg: "group response: group metadata: metadata too long",
 		},
-		"group policy metadata too long": {
+		"group policy metadata: metadata too long": {
 			req: &group.MsgCreateGroupWithPolicy{
 				Admin:               addr1.String(),
 				Members:             members,
@@ -840,7 +854,7 @@ func (s *TestSuite) TestCreateGroupWithPolicy() {
 				0,
 			),
 			expErr:    true,
-			expErrMsg: "group policy metadata: limit exceeded",
+			expErrMsg: "group policy metadata: metadata too long",
 		},
 		"member metadata too long": {
 			req: &group.MsgCreateGroupWithPolicy{
@@ -858,7 +872,7 @@ func (s *TestSuite) TestCreateGroupWithPolicy() {
 				0,
 			),
 			expErr:    true,
-			expErrMsg: "member metadata: limit exceeded",
+			expErrMsg: "group response: member metadata: metadata too long",
 		},
 		"zero member weight": {
 			req: &group.MsgCreateGroupWithPolicy{
@@ -919,7 +933,7 @@ func (s *TestSuite) TestCreateGroupWithPolicy() {
 			err := spec.req.SetDecisionPolicy(spec.policy)
 			s.Require().NoError(err)
 
-			blockTime := sdk.UnwrapSDKContext(s.ctx).BlockTime()
+			blockTime := sdk.UnwrapSDKContext(s.ctx).HeaderInfo().Time
 			res, err := s.groupKeeper.CreateGroupWithPolicy(s.ctx, spec.req)
 			if spec.expErr {
 				s.Require().Error(err)
@@ -1074,7 +1088,7 @@ func (s *TestSuite) TestCreateGroupPolicy() {
 				0,
 			),
 			expErr:    true,
-			expErrMsg: "limit exceeded",
+			expErrMsg: "group policy metadata: metadata too long",
 		},
 		"percentage decision policy with negative value": {
 			req: &group.MsgCreateGroupPolicy{
@@ -1214,6 +1228,23 @@ func (s *TestSuite) TestUpdateGroupPolicyAdmin() {
 				CreatedAt:      s.blockTime,
 			},
 			expErr: false,
+		},
+		"with invalid new admin address": {
+			req: &group.MsgUpdateGroupPolicyAdmin{
+				Admin:              admin.String(),
+				GroupPolicyAddress: groupPolicyAddr,
+				NewAdmin:           "%s",
+			},
+			expGroupPolicy: &group.GroupPolicyInfo{
+				Admin:          admin.String(),
+				Address:        groupPolicyAddr,
+				GroupId:        myGroupID,
+				Version:        2,
+				DecisionPolicy: nil,
+				CreatedAt:      s.blockTime,
+			},
+			expErr:    true,
+			expErrMsg: "new admin address",
 		},
 	}
 	for msg, spec := range specs {
@@ -1450,7 +1481,7 @@ func (s *TestSuite) TestUpdateGroupPolicyMetadata() {
 			},
 			expGroupPolicy: &group.GroupPolicyInfo{},
 			expErr:         true,
-			expErrMsg:      "group policy metadata: limit exceeded",
+			expErrMsg:      "group policy metadata: metadata too long",
 		},
 		"correct data": {
 			req: &group.MsgUpdateGroupPolicyMetadata{
@@ -1739,7 +1770,7 @@ func (s *TestSuite) TestSubmitProposal() {
 				Metadata:           strings.Repeat("a", 256),
 			},
 			expErr:    true,
-			expErrMsg: "limit exceeded",
+			expErrMsg: "metadata: metadata too long",
 			postRun:   func(sdkCtx sdk.Context) {},
 		},
 		"summary too long": {
@@ -1750,7 +1781,7 @@ func (s *TestSuite) TestSubmitProposal() {
 				Summary:            strings.Repeat("a", 256*40),
 			},
 			expErr:    true,
-			expErrMsg: "limit exceeded",
+			expErrMsg: "summary too long",
 			postRun:   func(sdkCtx sdk.Context) {},
 		},
 		"group policy required": {
@@ -1996,10 +2027,12 @@ func (s *TestSuite) TestWithdrawProposal() {
 			postRun: func(sdkCtx sdk.Context) {
 				resp, err := s.groupKeeper.Proposal(s.ctx, &group.QueryProposalRequest{ProposalId: proposalID})
 				s.Require().NoError(err)
+				key := storetypes.NewKVStoreKey(group.StoreKey)
+				env := runtime.NewEnvironment(runtime.NewKVStoreService(key), log.NewNopLogger())
 				vpe := resp.Proposal.VotingPeriodEnd
-				timeDiff := vpe.Sub(s.sdkCtx.BlockTime())
-				ctxVPE := sdkCtx.WithBlockTime(s.sdkCtx.BlockTime().Add(timeDiff).Add(time.Second * 1))
-				s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctxVPE))
+				timeDiff := vpe.Sub(s.sdkCtx.HeaderInfo().Time)
+				ctxVPE := sdkCtx.WithHeaderInfo(header.Info{Time: s.sdkCtx.HeaderInfo().Time.Add(timeDiff).Add(time.Second * 1)})
+				s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctxVPE, env))
 				events := ctxVPE.EventManager().ABCIEvents()
 
 				s.Require().True(eventTypeFound(events, EventProposalPruned))
@@ -2291,7 +2324,7 @@ func (s *TestSuite) TestVote() {
 				Metadata:   strings.Repeat("a", 256),
 			},
 			expErr:    true,
-			expErrMsg: "metadata: limit exceeded",
+			expErrMsg: "metadata: metadata too long",
 			postRun:   func(sdkCtx sdk.Context) {},
 		},
 		"existing proposal required": {
@@ -2349,7 +2382,7 @@ func (s *TestSuite) TestVote() {
 				Voter:      addr4.String(),
 				Option:     group.VOTE_OPTION_NO,
 			},
-			srcCtx:    s.sdkCtx.WithBlockTime(s.blockTime.Add(time.Second)),
+			srcCtx:    s.sdkCtx.WithHeaderInfo(header.Info{Time: s.sdkCtx.HeaderInfo().Time.Add(time.Second)}),
 			expErr:    true,
 			expErrMsg: "voting period has ended already: expired",
 			postRun:   func(sdkCtx sdk.Context) {},
@@ -2697,7 +2730,7 @@ func (s *TestSuite) TestExecProposal() {
 
 				// Wait after min execution period end before Exec
 				sdkCtx := sdk.UnwrapSDKContext(ctx)
-				sdkCtx = sdkCtx.WithBlockTime(sdkCtx.BlockTime().Add(minExecutionPeriod)) // MinExecutionPeriod is 5s
+				sdkCtx = sdkCtx.WithHeaderInfo(header.Info{Time: sdkCtx.HeaderInfo().Time.Add(minExecutionPeriod)}) // MinExecutionPeriod is 5s
 				_, err := s.groupKeeper.Exec(sdkCtx, &group.MsgExec{Executor: addr1.String(), ProposalId: myProposalID})
 				s.Require().NoError(err)
 				return myProposalID
@@ -2732,7 +2765,7 @@ func (s *TestSuite) TestExecProposal() {
 
 				// Wait after min execution period end before Exec
 				sdkCtx := sdk.UnwrapSDKContext(ctx)
-				sdkCtx = sdkCtx.WithBlockTime(sdkCtx.BlockTime().Add(minExecutionPeriod)) // MinExecutionPeriod is 5s
+				sdkCtx = sdkCtx.WithHeaderInfo(header.Info{Time: sdkCtx.HeaderInfo().Time.Add(minExecutionPeriod)}) // MinExecutionPeriod is 5s
 				s.bankKeeper.EXPECT().Send(gomock.Any(), msgSend2).Return(nil, fmt.Errorf("error"))
 				_, err := s.groupKeeper.Exec(sdkCtx, &group.MsgExec{Executor: addr1.String(), ProposalId: myProposalID})
 				s.bankKeeper.EXPECT().Send(gomock.Any(), msgSend2).Return(nil, nil)
@@ -2755,7 +2788,7 @@ func (s *TestSuite) TestExecProposal() {
 			proposalID := spec.setupProposal(sdkCtx)
 
 			if !spec.srcBlockTime.IsZero() {
-				sdkCtx = sdkCtx.WithBlockTime(spec.srcBlockTime)
+				sdkCtx = sdkCtx.WithHeaderInfo(header.Info{Time: spec.srcBlockTime})
 			}
 
 			_, err := s.groupKeeper.Exec(sdkCtx, &group.MsgExec{Executor: addr1.String(), ProposalId: proposalID})
@@ -2938,7 +2971,7 @@ func (s *TestSuite) TestExecPrunedProposalsAndVotes() {
 
 				// Wait for min execution period end
 				sdkCtx := sdk.UnwrapSDKContext(ctx)
-				sdkCtx = sdkCtx.WithBlockTime(sdkCtx.BlockTime().Add(minExecutionPeriod))
+				sdkCtx = sdkCtx.WithHeaderInfo(header.Info{Time: sdkCtx.HeaderInfo().Time.Add(minExecutionPeriod)})
 				_, err := s.groupKeeper.Exec(sdkCtx, &group.MsgExec{Executor: addr1.String(), ProposalId: myProposalID})
 				s.bankKeeper.EXPECT().Send(gomock.Any(), msgSend2).Return(nil, nil)
 
@@ -2956,11 +2989,11 @@ func (s *TestSuite) TestExecPrunedProposalsAndVotes() {
 			proposalID := spec.setupProposal(sdkCtx)
 
 			if !spec.srcBlockTime.IsZero() {
-				sdkCtx = sdkCtx.WithBlockTime(spec.srcBlockTime)
+				sdkCtx = sdkCtx.WithHeaderInfo(header.Info{Time: spec.srcBlockTime})
 			}
 
 			// Wait for min execution period end
-			sdkCtx = sdkCtx.WithBlockTime(sdkCtx.BlockTime().Add(minExecutionPeriod))
+			sdkCtx = sdkCtx.WithHeaderInfo(header.Info{Time: sdkCtx.HeaderInfo().Time.Add(minExecutionPeriod)})
 			_, err := s.groupKeeper.Exec(sdkCtx, &group.MsgExec{Executor: addr1.String(), ProposalId: proposalID})
 			if spec.expErr {
 				s.Require().Error(err)
@@ -3397,7 +3430,7 @@ func (s *TestSuite) TestExecProposalsWhenMemberLeavesOrIsUpdated() {
 			s.Require().NoError(err)
 
 			// travel in time
-			sdkCtx = sdkCtx.WithBlockTime(s.blockTime.Add(minExecutionPeriod + 1))
+			sdkCtx = sdkCtx.WithHeaderInfo(header.Info{Time: s.blockTime.Add(minExecutionPeriod + 1)})
 			_, err = s.groupKeeper.Exec(sdkCtx, &group.MsgExec{Executor: s.addrs[1].String(), ProposalId: proposalID})
 			if spec.expErrMsg != "" {
 				s.Require().Contains(err.Error(), spec.expErrMsg)

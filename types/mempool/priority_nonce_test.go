@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"cosmossdk.io/log"
+	"cosmossdk.io/x/auth/signing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/mempool"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
-	"github.com/cosmos/cosmos-sdk/x/auth/signing"
 )
 
 func TestOutOfOrder(t *testing.T) {
@@ -57,6 +57,87 @@ func TestOutOfOrder(t *testing.T) {
 	}
 
 	require.Error(t, validateOrder(rmtxs))
+}
+
+type signerExtractionAdapter struct {
+	UseOld bool
+}
+
+func (a signerExtractionAdapter) GetSigners(tx sdk.Tx) ([]mempool.SignerData, error) {
+	if !a.UseOld {
+		return mempool.NewDefaultSignerExtractionAdapter().GetSigners(tx)
+	}
+	sigs, err := tx.(signing.SigVerifiableTx).GetSignaturesV2()
+	if err != nil {
+		return nil, err
+	}
+	signerData := make([]mempool.SignerData, len(sigs))
+	for _, sig := range sigs {
+		signerData = append(signerData, mempool.SignerData{
+			Signer:   sig.PubKey.Address().Bytes(),
+			Sequence: sig.Sequence,
+		})
+	}
+	return signerData, nil
+}
+
+func (s *MempoolTestSuite) TestPriorityNonceTxOrderWithAdapter() {
+	t := s.T()
+	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 5)
+	sa := accounts[0].Address
+	sb := accounts[1].Address
+
+	tests := []struct {
+		txs   []txSpec
+		order []int
+		fail  bool
+	}{
+		{
+			txs: []txSpec{
+				{p: 21, n: 4, a: sa},
+				{p: 8, n: 3, a: sa},
+				{p: 6, n: 2, a: sa},
+				{p: 15, n: 1, a: sb},
+				{p: 20, n: 1, a: sa},
+			},
+			order: []int{4, 3, 2, 1, 0},
+		},
+	}
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			adapter := signerExtractionAdapter{}
+			pool := mempool.NewPriorityMempool(mempool.PriorityNonceMempoolConfig[int64]{
+				TxPriority:      mempool.NewDefaultTxPriority(),
+				SignerExtractor: adapter,
+			})
+
+			// create test txs and insert into mempool
+			for i, ts := range tt.txs {
+				tx := testTx{id: i, priority: int64(ts.p), nonce: uint64(ts.n), address: ts.a}
+				c := ctx.WithPriority(tx.priority)
+				err := pool.Insert(c, tx)
+				require.NoError(t, err)
+			}
+
+			orderedTxs := fetchTxs(pool.Select(ctx, nil), 1000)
+
+			var txOrder []int
+			for _, tx := range orderedTxs {
+				txOrder = append(txOrder, tx.(testTx).id)
+			}
+
+			require.Equal(t, tt.order, txOrder)
+			require.NoError(t, validateOrder(orderedTxs))
+
+			adapter.UseOld = true
+			for _, tx := range orderedTxs {
+				require.NoError(t, pool.Remove(tx))
+			}
+
+			require.NoError(t, mempool.IsEmpty[int64](pool))
+		})
+	}
 }
 
 func (s *MempoolTestSuite) TestPriorityNonceTxOrder() {
@@ -258,6 +339,62 @@ func (s *MempoolTestSuite) TestPriorityNonceTxOrder() {
 	}
 }
 
+func (s *MempoolTestSuite) TestIterator() {
+	t := s.T()
+	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 2)
+	sa := accounts[0].Address
+	sb := accounts[1].Address
+
+	tests := []struct {
+		txs  []txSpec
+		fail bool
+	}{
+		{
+			txs: []txSpec{
+				{p: 20, n: 1, a: sa},
+				{p: 15, n: 1, a: sb},
+				{p: 6, n: 2, a: sa},
+				{p: 21, n: 4, a: sa},
+				{p: 8, n: 2, a: sb},
+			},
+		},
+		{
+			txs: []txSpec{
+				{p: 20, n: 1, a: sa},
+				{p: 15, n: 1, a: sb},
+				{p: 6, n: 2, a: sa},
+				{p: 21, n: 4, a: sa},
+				{p: math.MinInt64, n: 2, a: sb},
+			},
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			pool := mempool.DefaultPriorityMempool()
+
+			// create test txs and insert into mempool
+			for i, ts := range tt.txs {
+				tx := testTx{id: i, priority: int64(ts.p), nonce: uint64(ts.n), address: ts.a}
+				c := ctx.WithPriority(tx.priority)
+				err := pool.Insert(c, tx)
+				require.NoError(t, err)
+			}
+
+			// iterate through txs
+			iterator := pool.Select(ctx, nil)
+			for iterator != nil {
+				tx := iterator.Tx().(testTx)
+				require.Equal(t, tt.txs[tx.id].p, int(tx.priority))
+				require.Equal(t, tt.txs[tx.id].n, int(tx.nonce))
+				require.Equal(t, tt.txs[tx.id].a, tx.address)
+				iterator = iterator.Next()
+			}
+		})
+	}
+}
+
 func (s *MempoolTestSuite) TestPriorityTies() {
 	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 3)
@@ -378,6 +515,7 @@ func (s *MempoolTestSuite) TestRandomGeneratedTxs() {
 			OnRead: func(tx sdk.Tx) {
 				s.iterations++
 			},
+			SignerExtractor: mempool.NewDefaultSignerExtractionAdapter(),
 		},
 	)
 
@@ -641,8 +779,9 @@ func TestNextSenderTx_TxLimit(t *testing.T) {
 	// unlimited
 	mp := mempool.NewPriorityMempool(
 		mempool.PriorityNonceMempoolConfig[int64]{
-			TxPriority: mempool.NewDefaultTxPriority(),
-			MaxTx:      0,
+			TxPriority:      mempool.NewDefaultTxPriority(),
+			MaxTx:           0,
+			SignerExtractor: mempool.NewDefaultSignerExtractionAdapter(),
 		},
 	)
 	for i, tx := range txs {
@@ -661,8 +800,9 @@ func TestNextSenderTx_TxLimit(t *testing.T) {
 	// limit: 3
 	mp = mempool.NewPriorityMempool(
 		mempool.PriorityNonceMempoolConfig[int64]{
-			TxPriority: mempool.NewDefaultTxPriority(),
-			MaxTx:      3,
+			TxPriority:      mempool.NewDefaultTxPriority(),
+			MaxTx:           3,
+			SignerExtractor: mempool.NewDefaultSignerExtractionAdapter(),
 		},
 	)
 	for i, tx := range txs {
@@ -680,8 +820,9 @@ func TestNextSenderTx_TxLimit(t *testing.T) {
 	// disabled
 	mp = mempool.NewPriorityMempool(
 		mempool.PriorityNonceMempoolConfig[int64]{
-			TxPriority: mempool.NewDefaultTxPriority(),
-			MaxTx:      -1,
+			TxPriority:      mempool.NewDefaultTxPriority(),
+			MaxTx:           -1,
+			SignerExtractor: mempool.NewDefaultSignerExtractionAdapter(),
 		},
 	)
 	for _, tx := range txs {
@@ -726,6 +867,7 @@ func TestNextSenderTx_TxReplacement(t *testing.T) {
 				threshold := int64(100 + feeBump)
 				return np >= op*threshold/100
 			},
+			SignerExtractor: mempool.NewDefaultSignerExtractionAdapter(),
 		},
 	)
 

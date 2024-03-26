@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"strings"
 
+	"cosmossdk.io/x/auth/client/cli"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	clitestutil "github.com/cosmos/cosmos-sdk/testutil/cli"
-	"github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 )
 
 func TxSignExec(clientCtx client.Context, from fmt.Stringer, filename string, extraArgs ...string) (testutil.BufferWriter, error) {
@@ -78,15 +79,6 @@ func TxDecodeExec(clientCtx client.Context, encodedTx string, extraArgs ...strin
 	}
 
 	return clitestutil.ExecTestCLICmd(clientCtx, cli.GetDecodeCommand(), append(args, extraArgs...))
-}
-
-// TxAuxToFeeExec executes `GetAuxToFeeCommand` cli command with given args.
-func TxAuxToFeeExec(clientCtx client.Context, filename string, extraArgs ...string) (testutil.BufferWriter, error) {
-	args := []string{
-		filename,
-	}
-
-	return clitestutil.ExecTestCLICmd(clientCtx, cli.GetAuxToFeeCommand(), append(args, extraArgs...))
 }
 
 func TxMultiSignBatchExec(clientCtx client.Context, filename, from, sigFile1, sigFile2 string, extraArgs ...string) (testutil.BufferWriter, error) {

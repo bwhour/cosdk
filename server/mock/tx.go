@@ -8,15 +8,15 @@ import (
 
 	bankv1beta1 "cosmossdk.io/api/cosmos/bank/v1beta1"
 	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/x/auth/signing"
 
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	txsigning "github.com/cosmos/cosmos-sdk/types/tx/signing"
-	"github.com/cosmos/cosmos-sdk/x/auth/signing"
 )
 
-// An sdk.Tx which is its own sdk.Msg.
+// KVStoreTx is an sdk.Tx which is its own sdk.Msg.
 type KVStoreTx struct {
 	key     []byte
 	value   []byte
@@ -72,6 +72,7 @@ func (msg *KVStoreTx) Equals(key cryptotypes.PubKey) bool {
 }
 
 // dummy implementation of proto.Message
+
 func (msg *KVStoreTx) Reset()         {}
 func (msg *KVStoreTx) String() string { return "TODO" }
 func (msg *KVStoreTx) ProtoMessage()  {}
@@ -110,7 +111,7 @@ func (msg *KVStoreTx) GetSignBytes() []byte {
 	return msg.bytes
 }
 
-// Should the app be calling this? Or only handlers?
+// ValidateBasic should the app be calling this? or only handlers?
 func (msg *KVStoreTx) ValidateBasic() error {
 	return nil
 }

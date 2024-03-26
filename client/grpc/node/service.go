@@ -42,13 +42,14 @@ func (s queryServer) Config(ctx context.Context, _ *ConfigRequest) (*ConfigRespo
 		MinimumGasPrice:   sdkCtx.MinGasPrices().String(),
 		PruningKeepRecent: s.cfg.PruningKeepRecent,
 		PruningInterval:   s.cfg.PruningInterval,
+		HaltHeight:        s.cfg.HaltHeight,
 	}, nil
 }
 
 func (s queryServer) Status(ctx context.Context, _ *StatusRequest) (*StatusResponse, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	blockTime := sdkCtx.BlockTime()
+	blockTime := sdkCtx.HeaderInfo().Time
 
 	return &StatusResponse{
 		// TODO: Get earliest version from store.

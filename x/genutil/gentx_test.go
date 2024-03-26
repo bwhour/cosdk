@@ -11,20 +11,23 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/suite"
 
+	_ "cosmossdk.io/api/cosmos/crypto/secp256k1"
 	"cosmossdk.io/core/genesis"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	banktypes "cosmossdk.io/x/bank/types"
+	stakingtypes "cosmossdk.io/x/staking/types"
 
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
 	genutiltestutil "github.com/cosmos/cosmos-sdk/x/genutil/testutil"
 	"github.com/cosmos/cosmos-sdk/x/genutil/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 var (
@@ -50,7 +53,7 @@ type GenTxTestSuite struct {
 }
 
 func (suite *GenTxTestSuite) SetupTest() {
-	suite.encodingConfig = moduletestutil.MakeTestEncodingConfig(genutil.AppModuleBasic{})
+	suite.encodingConfig = moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, genutil.AppModule{})
 	key := storetypes.NewKVStoreKey("a_Store_Key")
 	tkey := storetypes.NewTransientStoreKey("a_transient_store")
 	suite.ctx = testutil.DefaultContext(key, tkey)
@@ -239,6 +242,13 @@ func (suite *GenTxTestSuite) TestDeliverGenTxs() {
 		txBuilder = suite.encodingConfig.TxConfig.NewTxBuilder()
 	)
 
+	ac := addresscodec.NewBech32Codec("cosmos")
+
+	addr1Str, err := ac.BytesToString(addr1)
+	suite.Require().NoError(err)
+	addr2Str, err := ac.BytesToString(addr2)
+	suite.Require().NoError(err)
+
 	testCases := []struct {
 		msg         string
 		malleate    func()
@@ -263,7 +273,7 @@ func (suite *GenTxTestSuite) TestDeliverGenTxs() {
 			"success",
 			func() {
 				r := rand.New(rand.NewSource(time.Now().UnixNano()))
-				msg := banktypes.NewMsgSend(addr1, addr2, sdk.Coins{sdk.NewInt64Coin(sdk.DefaultBondDenom, 1)})
+				msg := banktypes.NewMsgSend(addr1Str, addr2Str, sdk.Coins{sdk.NewInt64Coin(sdk.DefaultBondDenom, 1)})
 				tx, err := simtestutil.GenSignedMockTx(
 					r,
 					suite.encodingConfig.TxConfig,

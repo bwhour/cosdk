@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"cosmossdk.io/math"
+	banktypes "cosmossdk.io/x/bank/types"
 
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
 func TestE2ETestSuite(t *testing.T) {
@@ -44,7 +44,7 @@ func (s *TestSuite) TestChainTokenTransfer() {
 		s.Require().NoError(err)
 
 		// build tx into the txBuilder
-		msg := banktypes.NewMsgSend(addr1, addr2, sdk.NewCoins(sdk.NewCoin(denom, math.NewInt(1230000))))
+		msg := banktypes.NewMsgSend(addr1.String(), addr2.String(), sdk.NewCoins(sdk.NewCoin(denom, math.NewInt(1230000))))
 		s.Require().NoError(err)
 		err = txBuilder.SetMsgs(msg)
 		s.Require().NoError(err)

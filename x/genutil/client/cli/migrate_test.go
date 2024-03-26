@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cosmos/cosmos-sdk/client"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	clitestutil "github.com/cosmos/cosmos-sdk/testutil/cli"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
@@ -23,12 +24,6 @@ func TestMigrateGenesis(t *testing.T) {
 		check     func(jsonOut string)
 	}{
 		{
-			"migrate 0.37 to 0.43",
-			v037Exported,
-			"v0.43",
-			true, "make sure that you have correctly migrated all CometBFT consensus params", func(_ string) {},
-		},
-		{
 			"invalid target version",
 			func() string {
 				bz, err := os.ReadFile("../../types/testdata/app_genesis.json")
@@ -37,7 +32,8 @@ func TestMigrateGenesis(t *testing.T) {
 				return string(bz)
 			}(),
 			"v0.10",
-			true, "unknown migration function for version: v0.10 (supported versions v0.43, v0.46, v0.47)", func(_ string) {},
+			true,
+			"unknown migration function for version: v0.10", func(_ string) {},
 		},
 		{
 			"invalid target version",
@@ -48,7 +44,8 @@ func TestMigrateGenesis(t *testing.T) {
 				return string(bz)
 			}(),
 			"v0.10",
-			true, "unknown migration function for version: v0.10 (supported versions v0.43, v0.46, v0.47)", func(_ string) {},
+			true,
+			"unknown migration function for version: v0.10", func(_ string) {},
 		},
 	}
 
@@ -58,7 +55,7 @@ func TestMigrateGenesis(t *testing.T) {
 			genesisFile := testutil.WriteToNewTempFile(t, tc.genesis)
 			jsonOutput, err := clitestutil.ExecTestCLICmd(
 				// the codec does not contain any modules so that genutil does not bring unnecessary dependencies in the test
-				client.Context{Codec: moduletestutil.MakeTestEncodingConfig().Codec},
+				client.Context{Codec: moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}).Codec},
 				cli.MigrateGenesisCmd(cli.MigrationMap),
 				[]string{tc.target, genesisFile.Name()},
 			)

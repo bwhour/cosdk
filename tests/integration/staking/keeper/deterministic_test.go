@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"gotest.tools/v3/assert"
 	"pgregory.net/rapid"
 
@@ -12,9 +11,23 @@ import (
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/auth"
+	authkeeper "cosmossdk.io/x/auth/keeper"
+	authsims "cosmossdk.io/x/auth/simulation"
+	authtypes "cosmossdk.io/x/auth/types"
+	"cosmossdk.io/x/bank"
+	bankkeeper "cosmossdk.io/x/bank/keeper"
+	banktestutil "cosmossdk.io/x/bank/testutil"
+	banktypes "cosmossdk.io/x/bank/types"
+	"cosmossdk.io/x/distribution"
+	minttypes "cosmossdk.io/x/mint/types"
+	"cosmossdk.io/x/staking"
+	stakingkeeper "cosmossdk.io/x/staking/keeper"
+	stakingtypes "cosmossdk.io/x/staking/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -22,19 +35,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	"github.com/cosmos/cosmos-sdk/x/auth"
-	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
-	authsims "github.com/cosmos/cosmos-sdk/x/auth/simulation"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	"github.com/cosmos/cosmos-sdk/x/bank"
-	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
-	banktestutil "github.com/cosmos/cosmos-sdk/x/bank/testutil"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/cosmos-sdk/x/distribution"
-	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
-	"github.com/cosmos/cosmos-sdk/x/staking"
-	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 var (
@@ -69,7 +69,8 @@ func initDeterministicFixture(t *testing.T) *deterministicFixture {
 	keys := storetypes.NewKVStoreKeys(
 		authtypes.StoreKey, banktypes.StoreKey, stakingtypes.StoreKey,
 	)
-	cdc := moduletestutil.MakeTestEncodingConfig(auth.AppModuleBasic{}, distribution.AppModuleBasic{}).Codec
+	encodingCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, auth.AppModule{}, distribution.AppModule{})
+	cdc := encodingCfg.Codec
 
 	logger := log.NewTestLogger(t)
 	cms := integration.CreateMultiStore(keys, logger)
@@ -86,8 +87,8 @@ func initDeterministicFixture(t *testing.T) *deterministicFixture {
 	}
 
 	accountKeeper := authkeeper.NewAccountKeeper(
+		runtime.NewEnvironment(runtime.NewKVStoreService(keys[authtypes.StoreKey]), log.NewNopLogger()),
 		cdc,
-		runtime.NewKVStoreService(keys[authtypes.StoreKey]),
 		authtypes.ProtoBaseAccount,
 		maccPerms,
 		addresscodec.NewBech32Codec(sdk.Bech32MainPrefix),
@@ -99,25 +100,27 @@ func initDeterministicFixture(t *testing.T) *deterministicFixture {
 		accountKeeper.GetAuthority(): false,
 	}
 	bankKeeper := bankkeeper.NewBaseKeeper(
+		runtime.NewEnvironment(runtime.NewKVStoreService(keys[banktypes.StoreKey]), log.NewNopLogger()),
 		cdc,
-		runtime.NewKVStoreService(keys[banktypes.StoreKey]),
 		accountKeeper,
 		blockedAddresses,
 		authority.String(),
-		log.NewNopLogger(),
 	)
 
-	stakingKeeper := stakingkeeper.NewKeeper(cdc, runtime.NewKVStoreService(keys[stakingtypes.StoreKey]), accountKeeper, bankKeeper, authority.String(), addresscodec.NewBech32Codec(sdk.Bech32PrefixValAddr), addresscodec.NewBech32Codec(sdk.Bech32PrefixConsAddr))
+	stakingKeeper := stakingkeeper.NewKeeper(cdc, runtime.NewEnvironment(runtime.NewKVStoreService(keys[stakingtypes.StoreKey]), log.NewNopLogger()), accountKeeper, bankKeeper, authority.String(), addresscodec.NewBech32Codec(sdk.Bech32PrefixValAddr), addresscodec.NewBech32Codec(sdk.Bech32PrefixConsAddr))
 
-	authModule := auth.NewAppModule(cdc, accountKeeper, authsims.RandomGenesisAccounts, nil)
-	bankModule := bank.NewAppModule(cdc, bankKeeper, accountKeeper, nil)
-	stakingModule := staking.NewAppModule(cdc, stakingKeeper, accountKeeper, bankKeeper, nil)
+	authModule := auth.NewAppModule(cdc, accountKeeper, authsims.RandomGenesisAccounts)
+	bankModule := bank.NewAppModule(cdc, bankKeeper, accountKeeper)
+	stakingModule := staking.NewAppModule(cdc, stakingKeeper, accountKeeper, bankKeeper)
 
-	integrationApp := integration.NewIntegrationApp(newCtx, logger, keys, cdc, map[string]appmodule.AppModule{
-		authtypes.ModuleName:    authModule,
-		banktypes.ModuleName:    bankModule,
-		stakingtypes.ModuleName: stakingModule,
-	})
+	integrationApp := integration.NewIntegrationApp(newCtx, logger, keys, cdc,
+		encodingCfg.InterfaceRegistry.SigningContext().AddressCodec(),
+		encodingCfg.InterfaceRegistry.SigningContext().ValidatorAddressCodec(),
+		map[string]appmodule.AppModule{
+			authtypes.ModuleName:    authModule,
+			banktypes.ModuleName:    bankModule,
+			stakingtypes.ModuleName: stakingModule,
+		})
 
 	ctx := integrationApp.Context()
 
@@ -126,7 +129,7 @@ func initDeterministicFixture(t *testing.T) *deterministicFixture {
 	stakingtypes.RegisterQueryServer(integrationApp.QueryHelper(), stakingkeeper.NewQuerier(stakingKeeper))
 
 	// set default staking params
-	assert.NilError(t, stakingKeeper.SetParams(ctx, stakingtypes.DefaultParams()))
+	assert.NilError(t, stakingKeeper.Params.Set(ctx, stakingtypes.DefaultParams()))
 
 	// set pools
 	startTokens := stakingKeeper.TokensFromConsensusPower(ctx, 10)
@@ -246,6 +249,9 @@ func setValidator(t *testing.T, f *deterministicFixture, validator stakingtypes.
 	coins := sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, validator.BondedTokens()))
 	assert.NilError(t, banktestutil.FundAccount(f.ctx, f.bankKeeper, delegatorAddress, coins))
 
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddress)
+	f.accountKeeper.SetAccount(f.ctx, acc)
+
 	_, err = f.stakingKeeper.Delegate(f.ctx, delegatorAddress, validator.BondedTokens(), stakingtypes.Unbonded, validator, true)
 	assert.NilError(t, err)
 }
@@ -349,7 +355,7 @@ func TestGRPCValidator(t *testing.T) {
 			ValidatorAddr: val.OperatorAddress,
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Validator, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.Validator, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
@@ -358,7 +364,7 @@ func TestGRPCValidator(t *testing.T) {
 		ValidatorAddr: val.OperatorAddress,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Validator, 1915, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.Validator, 1915, false)
 }
 
 func TestGRPCValidators(t *testing.T) {
@@ -377,14 +383,14 @@ func TestGRPCValidators(t *testing.T) {
 			Pagination: testdata.PaginationGenerator(rt, uint64(valsCount)).Draw(rt, "pagination"),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Validators, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.Validators, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 	getStaticValidator(t, f)
 	getStaticValidator2(t, f)
 
-	testdata.DeterministicIterations(f.ctx, t, &stakingtypes.QueryValidatorsRequest{}, f.queryClient.Validators, 2862, false)
+	testdata.DeterministicIterations(t, f.ctx, &stakingtypes.QueryValidatorsRequest{}, f.queryClient.Validators, 2862, false)
 }
 
 func TestGRPCValidatorDelegations(t *testing.T) {
@@ -397,6 +403,8 @@ func TestGRPCValidatorDelegations(t *testing.T) {
 
 		for i := 0; i < numDels; i++ {
 			delegator := testdata.AddressGenerator(rt).Draw(rt, "delegator")
+			acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+			f.accountKeeper.SetAccount(f.ctx, acc)
 			_, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 			assert.NilError(t, err)
 		}
@@ -406,16 +414,20 @@ func TestGRPCValidatorDelegations(t *testing.T) {
 			Pagination:    testdata.PaginationGenerator(rt, uint64(numDels)).Draw(rt, "pagination"),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.ValidatorDelegations, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.ValidatorDelegations, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
 	validator := getStaticValidator(t, f)
 
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	_, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
+	acc = f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr2)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	_, err = fundAccountAndDelegate(t, f, delegatorAddr2, validator, f.amt2)
 	assert.NilError(t, err)
 
@@ -423,7 +435,7 @@ func TestGRPCValidatorDelegations(t *testing.T) {
 		ValidatorAddr: validator.OperatorAddress,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.ValidatorDelegations, 14475, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.ValidatorDelegations, 14637, false)
 }
 
 func TestGRPCValidatorUnbondingDelegations(t *testing.T) {
@@ -436,6 +448,8 @@ func TestGRPCValidatorUnbondingDelegations(t *testing.T) {
 
 		for i := 0; i < numDels; i++ {
 			delegator := testdata.AddressGenerator(rt).Draw(rt, "delegator")
+			acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+			f.accountKeeper.SetAccount(f.ctx, acc)
 			shares, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 			assert.NilError(t, err)
 			valbz, err := f.stakingKeeper.ValidatorAddressCodec().StringToBytes(validator.GetOperator())
@@ -449,18 +463,22 @@ func TestGRPCValidatorUnbondingDelegations(t *testing.T) {
 			Pagination:    testdata.PaginationGenerator(rt, uint64(numDels)).Draw(rt, "pagination"),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.ValidatorUnbondingDelegations, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.ValidatorUnbondingDelegations, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
 	validator := getStaticValidator(t, f)
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	shares1, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
 	_, _, err = f.stakingKeeper.Undelegate(f.ctx, delegatorAddr1, validatorAddr1, shares1)
 	assert.NilError(t, err)
 
+	acc = f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr2)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	shares2, err := fundAccountAndDelegate(t, f, delegatorAddr2, validator, f.amt2)
 	assert.NilError(t, err)
 
@@ -471,7 +489,7 @@ func TestGRPCValidatorUnbondingDelegations(t *testing.T) {
 		ValidatorAddr: validator.OperatorAddress,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.ValidatorUnbondingDelegations, 3719, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.ValidatorUnbondingDelegations, 3719, false)
 }
 
 func TestGRPCDelegation(t *testing.T) {
@@ -481,6 +499,8 @@ func TestGRPCDelegation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		validator := createAndSetValidatorWithStatus(t, rt, f, stakingtypes.Bonded)
 		delegator := testdata.AddressGenerator(rt).Draw(rt, "delegator")
+		acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+		f.accountKeeper.SetAccount(f.ctx, acc)
 		_, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 		assert.NilError(t, err)
 
@@ -489,12 +509,14 @@ func TestGRPCDelegation(t *testing.T) {
 			DelegatorAddr: delegator.String(),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Delegation, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.Delegation, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
 	validator := getStaticValidator(t, f)
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	_, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
@@ -503,7 +525,7 @@ func TestGRPCDelegation(t *testing.T) {
 		DelegatorAddr: delegator1,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Delegation, 4635, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.Delegation, 4689, false)
 }
 
 func TestGRPCUnbondingDelegation(t *testing.T) {
@@ -513,6 +535,8 @@ func TestGRPCUnbondingDelegation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		validator := createAndSetValidatorWithStatus(t, rt, f, stakingtypes.Bonded)
 		delegator := testdata.AddressGenerator(rt).Draw(rt, "delegator")
+		acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+		f.accountKeeper.SetAccount(f.ctx, acc)
 		shares, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 		assert.NilError(t, err)
 
@@ -526,12 +550,14 @@ func TestGRPCUnbondingDelegation(t *testing.T) {
 			DelegatorAddr: delegator.String(),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.UnbondingDelegation, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.UnbondingDelegation, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 	validator := getStaticValidator(t, f)
 
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	shares1, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
@@ -543,7 +569,7 @@ func TestGRPCUnbondingDelegation(t *testing.T) {
 		DelegatorAddr: delegator1,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.UnbondingDelegation, 1621, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.UnbondingDelegation, 1621, false)
 }
 
 func TestGRPCDelegatorDelegations(t *testing.T) {
@@ -556,6 +582,8 @@ func TestGRPCDelegatorDelegations(t *testing.T) {
 
 		for i := 0; i < numVals; i++ {
 			validator := createAndSetValidatorWithStatus(t, rt, f, stakingtypes.Bonded)
+			acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+			f.accountKeeper.SetAccount(f.ctx, acc)
 			_, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 			assert.NilError(t, err)
 		}
@@ -565,12 +593,14 @@ func TestGRPCDelegatorDelegations(t *testing.T) {
 			Pagination:    testdata.PaginationGenerator(rt, uint64(numVals)).Draw(rt, "pagination"),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorDelegations, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorDelegations, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
 	validator := getStaticValidator(t, f)
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	_, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
@@ -578,7 +608,7 @@ func TestGRPCDelegatorDelegations(t *testing.T) {
 		DelegatorAddr: delegator1,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorDelegations, 4238, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorDelegations, 4292, false)
 }
 
 func TestGRPCDelegatorValidator(t *testing.T) {
@@ -589,6 +619,8 @@ func TestGRPCDelegatorValidator(t *testing.T) {
 		validator := createAndSetValidatorWithStatus(t, rt, f, stakingtypes.Bonded)
 
 		delegator := testdata.AddressGenerator(rt).Draw(rt, "delegator")
+		acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+		f.accountKeeper.SetAccount(f.ctx, acc)
 		_, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 		assert.NilError(t, err)
 
@@ -597,12 +629,14 @@ func TestGRPCDelegatorValidator(t *testing.T) {
 			ValidatorAddr: validator.OperatorAddress,
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorValidator, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorValidator, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
 	validator := getStaticValidator(t, f)
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	_, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 
 	assert.NilError(t, err)
@@ -612,7 +646,7 @@ func TestGRPCDelegatorValidator(t *testing.T) {
 		ValidatorAddr: validator.OperatorAddress,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorValidator, 3563, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorValidator, 3563, false)
 }
 
 func TestGRPCDelegatorUnbondingDelegations(t *testing.T) {
@@ -625,6 +659,8 @@ func TestGRPCDelegatorUnbondingDelegations(t *testing.T) {
 
 		for i := 0; i < numVals; i++ {
 			validator := createAndSetValidatorWithStatus(t, rt, f, stakingtypes.Bonded)
+			acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+			f.accountKeeper.SetAccount(f.ctx, acc)
 			shares, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 			assert.NilError(t, err)
 			valbz, err := f.stakingKeeper.ValidatorAddressCodec().StringToBytes(validator.GetOperator())
@@ -638,12 +674,14 @@ func TestGRPCDelegatorUnbondingDelegations(t *testing.T) {
 			Pagination:    testdata.PaginationGenerator(rt, uint64(numVals)).Draw(rt, "pagination"),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorUnbondingDelegations, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorUnbondingDelegations, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
 	validator := getStaticValidator(t, f)
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	shares1, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
@@ -654,7 +692,7 @@ func TestGRPCDelegatorUnbondingDelegations(t *testing.T) {
 		DelegatorAddr: delegator1,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorUnbondingDelegations, 1302, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorUnbondingDelegations, 1302, false)
 }
 
 func TestGRPCHistoricalInfo(t *testing.T) {
@@ -662,41 +700,26 @@ func TestGRPCHistoricalInfo(t *testing.T) {
 	f := initDeterministicFixture(t)
 
 	rapid.Check(t, func(rt *rapid.T) {
-		numVals := rapid.IntRange(1, 5).Draw(rt, "num-vals")
-		vals := stakingtypes.Validators{}
-		for i := 0; i < numVals; i++ {
-			validator := createAndSetValidatorWithStatus(t, rt, f, stakingtypes.Bonded)
-			vals.Validators = append(vals.Validators, validator)
-		}
-
-		historicalInfo := stakingtypes.HistoricalInfo{
-			Header: cmtproto.Header{},
-			Valset: vals.Validators,
-		}
+		historical := stakingtypes.HistoricalRecord{}
 
 		height := rapid.Int64Min(0).Draw(rt, "height")
 
 		assert.NilError(t, f.stakingKeeper.HistoricalInfo.Set(
 			f.ctx,
 			uint64(height),
-			historicalInfo,
+			historical,
 		))
 
 		req := &stakingtypes.QueryHistoricalInfoRequest{
 			Height: height,
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.HistoricalInfo, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.HistoricalInfo, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
-	validator := getStaticValidator(t, f)
-
-	historicalInfo := stakingtypes.HistoricalInfo{
-		Header: cmtproto.Header{},
-		Valset: []stakingtypes.Validator{validator},
-	}
+	historicalInfo := stakingtypes.HistoricalRecord{}
 
 	height := int64(127)
 
@@ -710,7 +733,7 @@ func TestGRPCHistoricalInfo(t *testing.T) {
 		Height: height,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.HistoricalInfo, 1945, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.HistoricalInfo, 1027, false)
 }
 
 func TestGRPCDelegatorValidators(t *testing.T) {
@@ -723,6 +746,8 @@ func TestGRPCDelegatorValidators(t *testing.T) {
 
 		for i := 0; i < numVals; i++ {
 			validator := createAndSetValidatorWithStatus(t, rt, f, stakingtypes.Bonded)
+			acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+			f.accountKeeper.SetAccount(f.ctx, acc)
 			_, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 			assert.NilError(t, err)
 		}
@@ -732,18 +757,19 @@ func TestGRPCDelegatorValidators(t *testing.T) {
 			Pagination:    testdata.PaginationGenerator(rt, uint64(numVals)).Draw(rt, "pagination"),
 		}
 
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorValidators, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorValidators, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 
 	validator := getStaticValidator(t, f)
-
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	_, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
 	req := &stakingtypes.QueryDelegatorValidatorsRequest{DelegatorAddr: delegator1}
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DelegatorValidators, 3166, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.DelegatorValidators, 3166, false)
 }
 
 func TestGRPCPool(t *testing.T) {
@@ -753,12 +779,12 @@ func TestGRPCPool(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		createAndSetValidator(t, rt, f)
 
-		testdata.DeterministicIterations(f.ctx, t, &stakingtypes.QueryPoolRequest{}, f.queryClient.Pool, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, &stakingtypes.QueryPoolRequest{}, f.queryClient.Pool, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 	getStaticValidator(t, f)
-	testdata.DeterministicIterations(f.ctx, t, &stakingtypes.QueryPoolRequest{}, f.queryClient.Pool, 6242, false)
+	testdata.DeterministicIterations(t, f.ctx, &stakingtypes.QueryPoolRequest{}, f.queryClient.Pool, 6296, false)
 }
 
 func TestGRPCRedelegations(t *testing.T) {
@@ -777,6 +803,8 @@ func TestGRPCRedelegations(t *testing.T) {
 		numDels := rapid.IntRange(1, 5).Draw(rt, "num-dels")
 
 		delegator := testdata.AddressGenerator(rt).Draw(rt, "delegator")
+		acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegator)
+		f.accountKeeper.SetAccount(f.ctx, acc)
 		shares, err := createDelegationAndDelegate(t, rt, f, delegator, validator)
 		assert.NilError(t, err)
 
@@ -804,13 +832,15 @@ func TestGRPCRedelegations(t *testing.T) {
 		}
 
 		req.Pagination = testdata.PaginationGenerator(rt, uint64(numDels)).Draw(rt, "pagination")
-		testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Redelegations, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.Redelegations, 0, true)
 	})
 
 	f = initDeterministicFixture(t) // reset
 	validator := getStaticValidator(t, f)
 	_ = getStaticValidator2(t, f)
 
+	acc := f.accountKeeper.NewAccountWithAddress(f.ctx, delegatorAddr1)
+	f.accountKeeper.SetAccount(f.ctx, acc)
 	shares, err := fundAccountAndDelegate(t, f, delegatorAddr1, validator, f.amt1)
 	assert.NilError(t, err)
 
@@ -823,27 +853,30 @@ func TestGRPCRedelegations(t *testing.T) {
 		DstValidatorAddr: validator2,
 	}
 
-	testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Redelegations, 3920, false)
+	testdata.DeterministicIterations(t, f.ctx, req, f.queryClient.Redelegations, 3920, false)
 }
 
 func TestGRPCParams(t *testing.T) {
 	t.Parallel()
 	f := initDeterministicFixture(t)
+	coinDenomRegex := `[a-zA-Z][a-zA-Z0-9/:._-]{2,127}`
 
 	rapid.Check(t, func(rt *rapid.T) {
+		bondDenom := rapid.StringMatching(coinDenomRegex).Draw(rt, "bond-denom")
 		params := stakingtypes.Params{
-			BondDenom:         rapid.StringMatching(sdk.DefaultCoinDenomRegex()).Draw(rt, "bond-denom"),
+			BondDenom:         bondDenom,
 			UnbondingTime:     durationGenerator().Draw(rt, "duration"),
 			MaxValidators:     rapid.Uint32Min(1).Draw(rt, "max-validators"),
 			MaxEntries:        rapid.Uint32Min(1).Draw(rt, "max-entries"),
 			HistoricalEntries: rapid.Uint32Min(1).Draw(rt, "historical-entries"),
 			MinCommissionRate: math.LegacyNewDecWithPrec(rapid.Int64Range(0, 100).Draw(rt, "commission"), 2),
+			KeyRotationFee:    sdk.NewInt64Coin(bondDenom, rapid.Int64Range(10000, 100000).Draw(rt, "amount")),
 		}
 
-		err := f.stakingKeeper.SetParams(f.ctx, params)
+		err := f.stakingKeeper.Params.Set(f.ctx, params)
 		assert.NilError(t, err)
 
-		testdata.DeterministicIterations(f.ctx, t, &stakingtypes.QueryParamsRequest{}, f.queryClient.Params, 0, true)
+		testdata.DeterministicIterations(t, f.ctx, &stakingtypes.QueryParamsRequest{}, f.queryClient.Params, 0, true)
 	})
 
 	params := stakingtypes.Params{
@@ -853,10 +886,11 @@ func TestGRPCParams(t *testing.T) {
 		MaxEntries:        5,
 		HistoricalEntries: 5,
 		MinCommissionRate: math.LegacyNewDecWithPrec(5, 2),
+		KeyRotationFee:    sdk.NewInt64Coin("denom", 10000),
 	}
 
-	err := f.stakingKeeper.SetParams(f.ctx, params)
+	err := f.stakingKeeper.Params.Set(f.ctx, params)
 	assert.NilError(t, err)
 
-	testdata.DeterministicIterations(f.ctx, t, &stakingtypes.QueryParamsRequest{}, f.queryClient.Params, 1114, false)
+	testdata.DeterministicIterations(t, f.ctx, &stakingtypes.QueryParamsRequest{}, f.queryClient.Params, 1162, false)
 }

@@ -6,27 +6,30 @@ import (
 	"testing"
 	"time"
 
-	cmttime "github.com/cometbft/cometbft/types/time"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/suite"
 
+	"cosmossdk.io/core/appmodule"
+	"cosmossdk.io/core/header"
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
+	authtypes "cosmossdk.io/x/auth/types"
+	"cosmossdk.io/x/bank"
+	banktypes "cosmossdk.io/x/bank/types"
+	"cosmossdk.io/x/group"
+	"cosmossdk.io/x/group/keeper"
+	"cosmossdk.io/x/group/module"
+	grouptestutil "cosmossdk.io/x/group/testutil"
+	minttypes "cosmossdk.io/x/mint/types"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec/address"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	"github.com/cosmos/cosmos-sdk/x/bank"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/cosmos-sdk/x/group"
-	"github.com/cosmos/cosmos-sdk/x/group/keeper"
-	"github.com/cosmos/cosmos-sdk/x/group/module"
-	grouptestutil "github.com/cosmos/cosmos-sdk/x/group/testutil"
-	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
 )
 
 const minExecutionPeriod = 5 * time.Second
@@ -44,14 +47,15 @@ type TestSuite struct {
 	blockTime       time.Time
 	bankKeeper      *grouptestutil.MockBankKeeper
 	accountKeeper   *grouptestutil.MockAccountKeeper
+	environment     appmodule.Environment
 }
 
 func (s *TestSuite) SetupTest() {
-	s.blockTime = cmttime.Now()
+	s.blockTime = time.Now().Round(0).UTC()
 	key := storetypes.NewKVStoreKey(group.StoreKey)
 
 	testCtx := testutil.DefaultContextWithDB(s.T(), key, storetypes.NewTransientStoreKey("transient_test"))
-	encCfg := moduletestutil.MakeTestEncodingConfig(module.AppModuleBasic{}, bank.AppModuleBasic{})
+	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{}, module.AppModule{}, bank.AppModule{})
 	s.addrs = simtestutil.CreateIncrementalAccounts(6)
 
 	// setup gomock and initialize some globally expected executions
@@ -73,10 +77,13 @@ func (s *TestSuite) SetupTest() {
 	bApp.SetInterfaceRegistry(encCfg.InterfaceRegistry)
 	banktypes.RegisterMsgServer(bApp.MsgServiceRouter(), s.bankKeeper)
 
+	env := runtime.NewEnvironment(runtime.NewKVStoreService(key), log.NewNopLogger(), runtime.EnvWithRouterService(bApp.GRPCQueryRouter(), bApp.MsgServiceRouter()))
 	config := group.DefaultConfig()
-	s.groupKeeper = keeper.NewKeeper(key, encCfg.Codec, bApp.MsgServiceRouter(), s.accountKeeper, config)
-	s.ctx = testCtx.Ctx.WithBlockTime(s.blockTime)
+	s.groupKeeper = keeper.NewKeeper(env, encCfg.Codec, s.accountKeeper, config)
+	s.ctx = testCtx.Ctx.WithHeaderInfo(header.Info{Time: s.blockTime})
 	s.sdkCtx = sdk.UnwrapSDKContext(s.ctx)
+
+	s.environment = env
 
 	// Initial group, group policy and balance setup
 	members := []group.MemberRequest{
@@ -179,7 +186,7 @@ func (s *TestSuite) TestProposalsByVPEnd() {
 				return submitProposal(sdkCtx, s, []sdk.Msg{msgSend}, proposers)
 			},
 			admin:     proposers[0],
-			newCtx:    ctx.WithBlockTime(now.Add(votingPeriod).Add(time.Hour)),
+			newCtx:    ctx.WithHeaderInfo(header.Info{Time: now.Add(votingPeriod).Add(time.Hour)}),
 			tallyRes:  group.DefaultTallyResult(),
 			expStatus: group.PROPOSAL_STATUS_REJECTED,
 		},
@@ -206,7 +213,7 @@ func (s *TestSuite) TestProposalsByVPEnd() {
 				return submitProposalAndVote(s.ctx, s, []sdk.Msg{msgSend}, proposers, group.VOTE_OPTION_YES)
 			},
 			admin:  proposers[0],
-			newCtx: ctx.WithBlockTime(now.Add(votingPeriod).Add(time.Hour)),
+			newCtx: ctx.WithHeaderInfo(header.Info{Time: now.Add(votingPeriod).Add(time.Hour)}),
 			tallyRes: group.TallyResult{
 				YesCount:        "2",
 				NoCount:         "0",
@@ -221,7 +228,7 @@ func (s *TestSuite) TestProposalsByVPEnd() {
 				return submitProposalAndVote(s.ctx, s, []sdk.Msg{msgSend}, []string{s.addrs[4].String()}, group.VOTE_OPTION_YES)
 			},
 			admin:  proposers[0],
-			newCtx: ctx.WithBlockTime(now.Add(votingPeriod).Add(time.Hour)),
+			newCtx: ctx.WithHeaderInfo(header.Info{Time: now.Add(votingPeriod).Add(time.Hour)}),
 			tallyRes: group.TallyResult{
 				YesCount:        "1",
 				NoCount:         "0",
@@ -269,7 +276,7 @@ func (s *TestSuite) TestProposalsByVPEnd() {
 		s.Run(msg, func() {
 			pID := spec.preRun(s.sdkCtx)
 
-			err := module.EndBlocker(spec.newCtx, s.groupKeeper)
+			err := s.groupKeeper.EndBlocker(spec.newCtx)
 			s.Require().NoError(err)
 			resp, err := s.groupKeeper.Proposal(spec.newCtx, &group.QueryProposalRequest{
 				ProposalId: pID,
@@ -328,10 +335,10 @@ func (s *TestSuite) TestPruneProposals() {
 	s.Require().NoError(err)
 	s.Require().Equal(prePrune.Proposal.Id, submittedProposal.ProposalId)
 	// Move Forward in time for 15 days, after voting period end + max_execution_period
-	s.sdkCtx = s.sdkCtx.WithBlockTime(s.sdkCtx.BlockTime().Add(expirationTime))
+	s.sdkCtx = s.sdkCtx.WithHeaderInfo(header.Info{Time: s.sdkCtx.HeaderInfo().Time.Add(expirationTime)})
 
 	// Prune Expired Proposals
-	err = s.groupKeeper.PruneProposals(s.sdkCtx)
+	err = s.groupKeeper.PruneProposals(s.sdkCtx, s.environment)
 	s.Require().NoError(err)
 	postPrune, err := s.groupKeeper.Proposal(s.ctx, &queryProposal)
 	s.Require().Nil(postPrune)
@@ -446,7 +453,7 @@ func (s *TestSuite) TestTallyProposalsAtVPEnd() {
 	s.Require().NoError(err)
 
 	// move forward in time
-	ctx := s.sdkCtx.WithBlockTime(s.sdkCtx.BlockTime().Add(votingPeriod + 1))
+	ctx := s.sdkCtx.WithHeaderInfo(header.Info{Time: s.sdkCtx.HeaderInfo().Time.Add(votingPeriod + 1)})
 
 	result, err := s.groupKeeper.TallyResult(ctx, &group.QueryTallyResultRequest{
 		ProposalId: proposalRes.ProposalId,
@@ -454,9 +461,9 @@ func (s *TestSuite) TestTallyProposalsAtVPEnd() {
 	s.Require().Equal("1", result.Tally.YesCount)
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctx))
+	s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctx, s.environment))
 	s.NotPanics(func() {
-		err := module.EndBlocker(ctx, s.groupKeeper)
+		err := s.groupKeeper.EndBlocker(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -518,12 +525,12 @@ func (s *TestSuite) TestTallyProposalsAtVPEnd_GroupMemberLeaving() {
 	s.Require().NoError(err)
 
 	// move forward in time
-	ctx := s.sdkCtx.WithBlockTime(s.sdkCtx.BlockTime().Add(votingPeriod + 1))
+	ctx := s.sdkCtx.WithHeaderInfo(header.Info{Time: s.sdkCtx.HeaderInfo().Time.Add(votingPeriod + 1)})
 
 	// Tally the result. This saves the tally result to state.
-	s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctx))
+	s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctx, s.environment))
 	s.NotPanics(func() {
-		err := module.EndBlocker(ctx, s.groupKeeper)
+		err := s.groupKeeper.EndBlocker(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -536,9 +543,9 @@ func (s *TestSuite) TestTallyProposalsAtVPEnd_GroupMemberLeaving() {
 	})
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctx))
+	s.Require().NoError(s.groupKeeper.TallyProposalsAtVPEnd(ctx, s.environment))
 	s.NotPanics(func() {
-		err := module.EndBlocker(ctx, s.groupKeeper)
+		err := s.groupKeeper.EndBlocker(ctx)
 		if err != nil {
 			panic(err)
 		}
