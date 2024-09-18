@@ -178,7 +178,6 @@ func (s *coinTestSuite) TestAddCoin() {
 	}
 
 	for tcIndex, tc := range cases {
-		tc := tc
 		if tc.shouldPanic {
 			s.Require().Panics(func() { tc.inputOne.Add(tc.inputTwo) })
 		} else {
@@ -218,7 +217,6 @@ func (s *coinTestSuite) TestSubCoin() {
 	}
 
 	for tcIndex, tc := range cases {
-		tc := tc
 		if tc.shouldPanic {
 			s.Require().Panics(func() { tc.inputOne.Sub(tc.inputTwo) })
 		} else {
@@ -274,7 +272,6 @@ func (s *coinTestSuite) TestMulIntCoins() {
 
 	assert := s.Assert()
 	for i, tc := range testCases {
-		tc := tc
 		if tc.shouldPanic {
 			assert.Panics(func() { tc.input.MulInt(tc.multiplier) })
 		} else {
@@ -301,7 +298,6 @@ func (s *coinTestSuite) TestQuoIntCoins() {
 
 	assert := s.Assert()
 	for i, tc := range testCases {
-		tc := tc
 		if tc.shouldPanic {
 			assert.Panics(func() { tc.input.QuoInt(tc.divisor) })
 		} else {
@@ -326,7 +322,6 @@ func (s *coinTestSuite) TestIsGTCoin() {
 	}
 
 	for tcIndex, tc := range cases {
-		tc := tc
 		if tc.panics {
 			s.Require().Panics(func() { tc.inputOne.IsGT(tc.inputTwo) })
 		} else {
@@ -350,7 +345,6 @@ func (s *coinTestSuite) TestIsGTECoin() {
 	}
 
 	for tcIndex, tc := range cases {
-		tc := tc
 		if tc.panics {
 			s.Require().Panics(func() { tc.inputOne.IsGTE(tc.inputTwo) })
 		} else {
@@ -374,7 +368,6 @@ func (s *coinTestSuite) TestIsLTECoin() {
 	}
 
 	for tcIndex, tc := range cases {
-		tc := tc
 		if tc.panics {
 			s.Require().Panics(func() { tc.inputOne.IsLTE(tc.inputTwo) })
 		} else {
@@ -400,7 +393,6 @@ func (s *coinTestSuite) TestIsLTCoin() {
 	}
 
 	for tcIndex, tc := range cases {
-		tc := tc
 		if tc.panics {
 			s.Require().Panics(func() { tc.inputOne.IsLT(tc.inputTwo) })
 		} else {
@@ -641,6 +633,21 @@ func TestCoinsAddCoalescesDuplicateDenominations(t *testing.T) {
 	}
 }
 
+func TestCoinsAddUnorderedDenominations(t *testing.T) {
+	A := sdk.Coins{
+		{"aaa", math.NewInt(2)},
+		{"bbb", math.NewInt(3)},
+	}
+	B := sdk.Coins{
+		{"bbb", math.NewInt(3)},
+		{"aaa", math.NewInt(2)},
+	}
+
+	require.Panics(t, func() {
+		A.Add(B...)
+	})
+}
+
 func (s *coinTestSuite) TestSubCoins() {
 	cA0M0 := sdk.Coins{s.ca0, s.cm0}
 	cA0M1 := sdk.Coins{s.ca0, s.cm1}
@@ -668,7 +675,6 @@ func (s *coinTestSuite) TestSubCoins() {
 
 	assert := s.Assert()
 	for i, tc := range testCases {
-		tc := tc
 		if tc.shouldPanic {
 			assert.Panics(func() { tc.inputOne.Sub(tc.inputTwo...) })
 		} else {
@@ -693,7 +699,7 @@ func (s *coinTestSuite) TestSafeSubCoin() {
 	}
 
 	for _, tc := range cases {
-		tc := tc
+
 		res, err := tc.inputOne.SafeSub(tc.inputTwo)
 		if err != nil {
 			s.Require().Contains(err.Error(), tc.expErrMsg)
@@ -929,6 +935,13 @@ func (s *coinTestSuite) TestMinMax() {
 			sdk.Coins{{testDenom1, two}, {testDenom2, one}},
 			sdk.Coins{{testDenom1, one}, {testDenom2, one}},
 			sdk.Coins{{testDenom1, two}, {testDenom2, two}},
+		},
+		{
+			"one-one",
+			sdk.Coins{{testDenom2, one}},
+			sdk.Coins{{testDenom1, one}},
+			sdk.Coins{},
+			sdk.Coins{{testDenom1, one}, {testDenom2, one}},
 		},
 	}
 
@@ -1351,7 +1364,7 @@ func (s *coinTestSuite) TestCoinValidate() {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
+
 		t := s.T()
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.coin.Validate()
@@ -1384,4 +1397,85 @@ func (s *coinTestSuite) TestCoinAminoEncoding() {
 	s.Require().NoError(err)
 	s.Require().Equal(bz1, bz3)
 	s.Require().Equal(bz2[1:], bz3)
+}
+
+func (s *coinTestSuite) TestGetDenomByIndex() {
+	twoAtom := sdk.NewInt64Coin("atom", 2)
+	threeEth := sdk.NewInt64Coin("eth", 3)
+
+	coins := sdk.Coins{twoAtom, threeEth}
+
+	actual := coins.GetDenomByIndex(0)
+	s.Require().Equal("atom", actual)
+	actual = coins.GetDenomByIndex(1)
+	s.Require().Equal("eth", actual)
+}
+
+func (s *coinTestSuite) TestIsAllPositive() {
+	negative := sdk.Coin{
+		Denom:  "atom",
+		Amount: math.NewInt(-2),
+	}
+
+	cases := map[string]struct {
+		coins    sdk.Coins
+		expected bool
+	}{
+		"Coins with zero length": {
+			coins:    sdk.Coins{},
+			expected: false,
+		},
+		"Coins with negative value": {
+			coins:    sdk.Coins{negative, sdk.NewInt64Coin("atom", 2)},
+			expected: false,
+		},
+		"Coins only with positive values": {
+			coins:    sdk.Coins{sdk.NewInt64Coin("atom", 2), sdk.NewInt64Coin("eth", 10)},
+			expected: true,
+		},
+	}
+
+	for name, tc := range cases {
+		c := tc
+		s.T().Run(name, func(t *testing.T) {
+			s.Require().Equal(c.expected, c.coins.IsAllPositive())
+		})
+	}
+}
+
+func (s *coinTestSuite) TestParseCoin() {
+	one := math.OneInt()
+
+	cases := []struct {
+		input    string
+		valid    bool     // if false, we expect an error on parse
+		expected sdk.Coin // if valid is true, make sure this is returned
+	}{
+		{"", false, sdk.Coin{}},
+		{"0stake", true, sdk.Coin{Denom: "stake", Amount: math.NewInt(0)}}, // remove zero coins
+		{"1foo", true, sdk.Coin{Denom: "foo", Amount: one}},
+		{"10btc", true, sdk.Coin{Denom: "btc", Amount: math.NewInt(10)}},
+		{"10bar", true, sdk.Coin{Denom: "bar", Amount: math.NewInt(10)}},
+		{"98 bar", true, sdk.Coin{Denom: "bar", Amount: math.NewInt(98)}},
+		{"  55\t \t bling\n", true, sdk.Coin{Denom: "bling", Amount: math.NewInt(55)}},
+		{"2foo", true, sdk.Coin{Denom: "foo", Amount: math.NewInt(2)}},
+		{"5 mycoin,", false, sdk.Coin{}},                                 // no empty coins in a list
+		{"2 3foo", false, sdk.Coin{}},                                    // 3foo is invalid coin name
+		{"11me coin", false, sdk.Coin{}},                                 // no spaces in coin names
+		{"1.2btc", true, sdk.Coin{Denom: "btc", Amount: math.NewInt(1)}}, // amount can be decimal, will get truncated
+		{"5foo:bar", true, sdk.Coin{Denom: "foo:bar", Amount: math.NewInt(5)}},
+		{"10atom10", true, sdk.Coin{Denom: "atom10", Amount: math.NewInt(10)}},
+		{"200transfer/channelToA/uatom", true, sdk.Coin{Denom: "transfer/channelToA/uatom", Amount: math.NewInt(200)}},
+		{"50ibc/7F1D3FCF4AE79E1554D670D1AD949A9BA4E4A3C76C63093E17E446A46061A7A2", true, sdk.Coin{Denom: "ibc/7F1D3FCF4AE79E1554D670D1AD949A9BA4E4A3C76C63093E17E446A46061A7A2", Amount: math.NewInt(50)}},
+		{"120000000000000000000000000000000000000000000000000000000000000000000000000000btc", false, sdk.Coin{}},
+	}
+
+	for tcIndex, tc := range cases {
+		res, err := sdk.ParseCoinNormalized(tc.input)
+		if !tc.valid {
+			s.Require().Error(err, "%s: %#v. tc #%d", tc.input, res, tcIndex)
+		} else if s.Assert().Nil(err) {
+			s.Require().Equal(tc.expected, res, "coin parsing was incorrect, tc #%d", tcIndex)
+		}
+	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -28,15 +29,15 @@ type legacyProposal struct {
 // validate the legacyProposal
 func (p legacyProposal) validate() error {
 	if p.Type == "" {
-		return fmt.Errorf("proposal type is required")
+		return errors.New("proposal type is required")
 	}
 
 	if p.Title == "" {
-		return fmt.Errorf("proposal title is required")
+		return errors.New("proposal title is required")
 	}
 
 	if p.Description == "" {
-		return fmt.Errorf("proposal description is required")
+		return errors.New("proposal description is required")
 	}
 	return nil
 }
@@ -95,7 +96,7 @@ type proposal struct {
 	Summary         string            `json:"summary"`
 	ProposalTypeStr string            `json:"proposal_type,omitempty"`
 
-	proposalType govv1.ProposalType `json:"-"`
+	proposalType govv1.ProposalType
 }
 
 // parseSubmitProposal reads and parses the proposal.

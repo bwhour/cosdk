@@ -34,6 +34,7 @@ package gogoreflection
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -183,7 +184,7 @@ func fqn(prefix, name string) string {
 // fileDescForType gets the file descriptor for the given type.
 // The given type should be a proto message.
 func (s *serverReflectionServer) fileDescForType(st reflect.Type) (*dpb.FileDescriptorProto, error) {
-	m, ok := reflect.Zero(reflect.PtrTo(st)).Interface().(protoMessage)
+	m, ok := reflect.Zero(reflect.PointerTo(st)).Interface().(protoMessage)
 	if !ok {
 		return nil, fmt.Errorf("failed to create message from type: %v", st)
 	}
@@ -231,7 +232,7 @@ func typeForName(name string) (reflect.Type, error) {
 }
 
 func fileDescContainingExtension(st reflect.Type, ext int32) (*dpb.FileDescriptorProto, error) {
-	m, ok := reflect.Zero(reflect.PtrTo(st)).Interface().(proto.Message)
+	m, ok := reflect.Zero(reflect.PointerTo(st)).Interface().(proto.Message)
 	if !ok {
 		return nil, fmt.Errorf("failed to create message from type: %v", st)
 	}
@@ -246,7 +247,7 @@ func fileDescContainingExtension(st reflect.Type, ext int32) (*dpb.FileDescripto
 }
 
 func (s *serverReflectionServer) allExtensionNumbersForType(st reflect.Type) ([]int32, error) {
-	m, ok := reflect.Zero(reflect.PtrTo(st)).Interface().(proto.Message)
+	m, ok := reflect.Zero(reflect.PointerTo(st)).Interface().(proto.Message)
 	if !ok {
 		return nil, fmt.Errorf("failed to create message from type: %v", st)
 	}
@@ -375,7 +376,7 @@ func (s *serverReflectionServer) ServerReflectionInfo(stream rpb.ServerReflectio
 	sentFileDescriptors := make(map[string]bool)
 	for {
 		in, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {

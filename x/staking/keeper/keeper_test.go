@@ -10,10 +10,10 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/header"
+	coretesting "cosmossdk.io/core/testing"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
-	authtypes "cosmossdk.io/x/auth/types"
 	stakingkeeper "cosmossdk.io/x/staking/keeper"
 	stakingtestutil "cosmossdk.io/x/staking/testutil"
 	stakingtypes "cosmossdk.io/x/staking/types"
@@ -29,6 +29,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	addresstypes "github.com/cosmos/cosmos-sdk/types/address"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
 var (
@@ -41,6 +42,7 @@ type KeeperTestSuite struct {
 	suite.Suite
 
 	ctx           sdk.Context
+	baseApp       *baseapp.BaseApp
 	stakingKeeper *stakingkeeper.Keeper
 	bankKeeper    *stakingtestutil.MockBankKeeper
 	accountKeeper *stakingtestutil.MockAccountKeeper
@@ -55,12 +57,20 @@ func (s *KeeperTestSuite) SetupTest() {
 	key := storetypes.NewKVStoreKey(stakingtypes.StoreKey)
 	s.key = key
 	storeService := runtime.NewKVStoreService(key)
-	env := runtime.NewEnvironment(storeService, log.NewNopLogger())
 	testCtx := testutil.DefaultContextWithDB(s.T(), key, storetypes.NewTransientStoreKey("transient_test"))
 	s.key = key
 	ctx := testCtx.Ctx.WithHeaderInfo(header.Info{Time: time.Now()})
 	encCfg := moduletestutil.MakeTestEncodingConfig(codectestutil.CodecOptions{})
 	s.cdc = encCfg.Codec
+
+	s.baseApp = baseapp.NewBaseApp(
+		"staking",
+		log.NewNopLogger(),
+		testCtx.DB,
+		encCfg.TxConfig.TxDecoder(),
+	)
+	s.baseApp.SetCMS(testCtx.CMS)
+	s.baseApp.SetInterfaceRegistry(encCfg.InterfaceRegistry)
 
 	ctrl := gomock.NewController(s.T())
 	accountKeeper := stakingtestutil.NewMockAccountKeeper(ctrl)
@@ -68,7 +78,13 @@ func (s *KeeperTestSuite) SetupTest() {
 	accountKeeper.EXPECT().GetModuleAddress(stakingtypes.NotBondedPoolName).Return(notBondedAcc.GetAddress())
 	accountKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
 
+	// create consensus keeper
+	ck := stakingtestutil.NewMockConsensusKeeper(ctrl)
+	ck.EXPECT().ValidatorPubKeyTypes(gomock.Any()).Return(simtestutil.DefaultConsensusParams.Validator.PubKeyTypes, nil).AnyTimes()
+	queryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)
+
 	bankKeeper := stakingtestutil.NewMockBankKeeper(ctrl)
+	env := runtime.NewEnvironment(storeService, coretesting.NewNopLogger(), runtime.EnvWithMsgRouterService(s.baseApp.MsgServiceRouter()))
 	authority, err := accountKeeper.AddressCodec().BytesToString(authtypes.NewModuleAddress(stakingtypes.GovModuleName))
 	s.Require().NoError(err)
 	keeper := stakingkeeper.NewKeeper(
@@ -76,9 +92,11 @@ func (s *KeeperTestSuite) SetupTest() {
 		env,
 		accountKeeper,
 		bankKeeper,
+		ck,
 		authority,
 		address.NewBech32Codec("cosmosvaloper"),
 		address.NewBech32Codec("cosmosvalcons"),
+		runtime.NewContextAwareCometInfoService(),
 	)
 	require.NoError(keeper.Params.Set(ctx, stakingtypes.DefaultParams()))
 
@@ -88,7 +106,6 @@ func (s *KeeperTestSuite) SetupTest() {
 	s.accountKeeper = accountKeeper
 
 	stakingtypes.RegisterInterfaces(encCfg.InterfaceRegistry)
-	queryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)
 	stakingtypes.RegisterQueryServer(queryHelper, stakingkeeper.Querier{Keeper: keeper})
 	s.queryClient = stakingtypes.NewQueryClient(queryHelper)
 	s.msgServer = stakingkeeper.NewMsgServerImpl(keeper)
@@ -267,7 +284,7 @@ func (s *KeeperTestSuite) TestLastTotalPowerMigrationToColls() {
 
 			s.ctx.KVStore(s.key).Set(getLastValidatorPowerKey(valAddrs[i]), bz)
 		},
-		"198aa9b8c1d9bc02308b7b2a48944f3e4b05c6b8312cb0bcc73518d1260f682d",
+		"d9690cb1904ab91c618a3f6d27ef90bfe6fb57a2c01970b7c088ec4ecd0613eb",
 	)
 	s.Require().NoError(err)
 
@@ -282,7 +299,7 @@ func (s *KeeperTestSuite) TestLastTotalPowerMigrationToColls() {
 			err = s.stakingKeeper.LastValidatorPower.Set(s.ctx, valAddrs[i], intV)
 			s.Require().NoError(err)
 		},
-		"198aa9b8c1d9bc02308b7b2a48944f3e4b05c6b8312cb0bcc73518d1260f682d",
+		"d9690cb1904ab91c618a3f6d27ef90bfe6fb57a2c01970b7c088ec4ecd0613eb",
 	)
 	s.Require().NoError(err)
 }
@@ -300,7 +317,7 @@ func (s *KeeperTestSuite) TestSrcRedelegationsMigrationToColls() {
 			// legacy method to set in the state
 			s.ctx.KVStore(s.key).Set(getREDByValSrcIndexKey(addrs[i], valAddrs[i], valAddrs[i+1]), []byte{})
 		},
-		"cae99e5c0498356a290f9478b7db73d522840b736878a9d4c00b56d1ddd7fd04",
+		"43ab9766738a05bfe5f1fd5dd0fb01c05b574f7d43c004dbf228deb437e0eb7c",
 	)
 	s.Require().NoError(err)
 
@@ -313,7 +330,7 @@ func (s *KeeperTestSuite) TestSrcRedelegationsMigrationToColls() {
 			err := s.stakingKeeper.RedelegationsByValSrc.Set(s.ctx, collections.Join3(valAddrs[i].Bytes(), addrs[i].Bytes(), valAddrs[i+1].Bytes()), []byte{})
 			s.Require().NoError(err)
 		},
-		"cae99e5c0498356a290f9478b7db73d522840b736878a9d4c00b56d1ddd7fd04",
+		"43ab9766738a05bfe5f1fd5dd0fb01c05b574f7d43c004dbf228deb437e0eb7c",
 	)
 
 	s.Require().NoError(err)
@@ -332,7 +349,7 @@ func (s *KeeperTestSuite) TestDstRedelegationsMigrationToColls() {
 			// legacy method to set in the state
 			s.ctx.KVStore(s.key).Set(getREDByValDstIndexKey(addrs[i], valAddrs[i], valAddrs[i+1]), []byte{})
 		},
-		"1b7687449a83f8176a60aeced7bcfc69a2b957b9eefad60c69a9fae9acfdaa81", // this hash obtained when ran this test in main branch
+		"70c00b5171cbef019742d236096df60fc423cd7568c4933ab165baa3c68a64a1", // this hash obtained when ran this test in main branch
 	)
 	s.Require().NoError(err)
 
@@ -345,7 +362,7 @@ func (s *KeeperTestSuite) TestDstRedelegationsMigrationToColls() {
 			err := s.stakingKeeper.RedelegationsByValDst.Set(s.ctx, collections.Join3(valAddrs[i+1].Bytes(), addrs[i].Bytes(), valAddrs[i].Bytes()), []byte{})
 			s.Require().NoError(err)
 		},
-		"1b7687449a83f8176a60aeced7bcfc69a2b957b9eefad60c69a9fae9acfdaa81",
+		"70c00b5171cbef019742d236096df60fc423cd7568c4933ab165baa3c68a64a1",
 	)
 
 	s.Require().NoError(err)
@@ -376,7 +393,7 @@ func (s *KeeperTestSuite) TestUnbondingDelegationsMigrationToColls() {
 			s.ctx.KVStore(s.key).Set(getUBDKey(delAddrs[i], valAddrs[i]), bz)
 			s.ctx.KVStore(s.key).Set(getUBDByValIndexKey(delAddrs[i], valAddrs[i]), []byte{})
 		},
-		"70454ad98368368aaff32d207a7a115fba49133ecf2a225d8e3eca88c6b2324c",
+		"bae8a1f2070bea541bfeca8e7e4a1203cb316126451325b846b303897e8e7082",
 	)
 	s.Require().NoError(err)
 
@@ -400,7 +417,7 @@ func (s *KeeperTestSuite) TestUnbondingDelegationsMigrationToColls() {
 			err := s.stakingKeeper.SetUnbondingDelegation(s.ctx, ubd)
 			s.Require().NoError(err)
 		},
-		"70454ad98368368aaff32d207a7a115fba49133ecf2a225d8e3eca88c6b2324c",
+		"bae8a1f2070bea541bfeca8e7e4a1203cb316126451325b846b303897e8e7082",
 	)
 	s.Require().NoError(err)
 }
@@ -417,7 +434,7 @@ func (s *KeeperTestSuite) TestUBDQueueMigrationToColls() {
 			// legacy Set method
 			s.ctx.KVStore(s.key).Set(getUnbondingDelegationTimeKey(date), []byte{})
 		},
-		"2dd1dd08ea1cc2b0a076c420e3888b218647b9409b435f75e5730b0e4f25e890",
+		"3f2de3f984c99cce5307db45961237220212c02981654b01b7b52f7a68b5b21b",
 	)
 	s.Require().NoError(err)
 
@@ -430,7 +447,7 @@ func (s *KeeperTestSuite) TestUBDQueueMigrationToColls() {
 			err := s.stakingKeeper.SetUBDQueueTimeSlice(s.ctx, date, nil)
 			s.Require().NoError(err)
 		},
-		"2dd1dd08ea1cc2b0a076c420e3888b218647b9409b435f75e5730b0e4f25e890",
+		"3f2de3f984c99cce5307db45961237220212c02981654b01b7b52f7a68b5b21b",
 	)
 	s.Require().NoError(err)
 }
@@ -464,7 +481,7 @@ func (s *KeeperTestSuite) TestValidatorsMigrationToColls() {
 			// legacy Set method
 			s.ctx.KVStore(s.key).Set(getValidatorKey(valAddrs[i]), valBz)
 		},
-		"aa495d55fb45df89fcf1d4326331bfc1244ef879764abe76f6ce2a41ccd4180d",
+		"d8acdcf8b7c8e17f3e83f0a4c293f89ad619a5dcb14d232911ccc5da15653177",
 	)
 	s.Require().NoError(err)
 
@@ -490,7 +507,7 @@ func (s *KeeperTestSuite) TestValidatorsMigrationToColls() {
 			err := s.stakingKeeper.SetValidator(s.ctx, val)
 			s.Require().NoError(err)
 		},
-		"aa495d55fb45df89fcf1d4326331bfc1244ef879764abe76f6ce2a41ccd4180d",
+		"d8acdcf8b7c8e17f3e83f0a4c293f89ad619a5dcb14d232911ccc5da15653177",
 	)
 	s.Require().NoError(err)
 }
@@ -513,7 +530,7 @@ func (s *KeeperTestSuite) TestValidatorQueueMigrationToColls() {
 			// legacy Set method
 			s.ctx.KVStore(s.key).Set(getValidatorQueueKey(endTime, endHeight), bz)
 		},
-		"b23a5905ced2b76c46ddd0f7d39e2ed7dcc68cd81993c497ee314b2e1a158595",
+		"a631942cd94450d778706c98afc4f83231524e3e94c88474cdab79a01a4899a0",
 	)
 	s.Require().NoError(err)
 
@@ -528,7 +545,7 @@ func (s *KeeperTestSuite) TestValidatorQueueMigrationToColls() {
 			err := s.stakingKeeper.SetUnbondingValidatorsQueue(s.ctx, endTime, endHeight, addrs)
 			s.Require().NoError(err)
 		},
-		"b23a5905ced2b76c46ddd0f7d39e2ed7dcc68cd81993c497ee314b2e1a158595",
+		"a631942cd94450d778706c98afc4f83231524e3e94c88474cdab79a01a4899a0",
 	)
 	s.Require().NoError(err)
 }
@@ -556,7 +573,7 @@ func (s *KeeperTestSuite) TestRedelegationQueueMigrationToColls() {
 			s.Require().NoError(err)
 			s.ctx.KVStore(s.key).Set(getRedelegationTimeKey(date), bz)
 		},
-		"d6a1c46c7c5793ff7094b67252c82883aecb75c8359428a59aacd3657fa16235",
+		"58722ccde0cacda42aa81d71d7da1123b2c4a8e35d961d55f1507c3f10ffbc96",
 	)
 	s.Require().NoError(err)
 
@@ -578,7 +595,7 @@ func (s *KeeperTestSuite) TestRedelegationQueueMigrationToColls() {
 			err := s.stakingKeeper.SetRedelegationQueueTimeSlice(s.ctx, date, dvvTriplets.Triplets)
 			s.Require().NoError(err)
 		},
-		"d6a1c46c7c5793ff7094b67252c82883aecb75c8359428a59aacd3657fa16235",
+		"58722ccde0cacda42aa81d71d7da1123b2c4a8e35d961d55f1507c3f10ffbc96",
 	)
 	s.Require().NoError(err)
 }

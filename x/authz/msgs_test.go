@@ -12,7 +12,6 @@ import (
 
 	txv1beta1 "cosmossdk.io/api/cosmos/tx/v1beta1"
 	sdkmath "cosmossdk.io/math"
-	"cosmossdk.io/x/auth/migrations/legacytx"
 	"cosmossdk.io/x/authz"
 	banktypes "cosmossdk.io/x/bank/types"
 	stakingtypes "cosmossdk.io/x/staking/types"
@@ -23,6 +22,7 @@ import (
 	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/auth/migrations/legacytx"
 )
 
 func TestMsgGrantGetAuthorization(t *testing.T) {
@@ -69,7 +69,7 @@ func TestAminoJSON(t *testing.T) {
 	require.NoError(t, err)
 	grant, err := authz.NewGrant(blockTime, authz.NewGenericAuthorization(typeURL), &expiresAt)
 	require.NoError(t, err)
-	sendAuthz := banktypes.NewSendAuthorization(sdk.NewCoins(sdk.NewCoin("stake", sdkmath.NewInt(1000))), nil)
+	sendAuthz := banktypes.NewSendAuthorization(sdk.NewCoins(sdk.NewCoin("stake", sdkmath.NewInt(1000))), nil, codectestutil.CodecOptions{}.GetValidatorCodec())
 	sendGrant, err := authz.NewGrant(blockTime, sendAuthz, &expiresAt)
 	require.NoError(t, err)
 	valAddr, err := valAddressCodec.StringToBytes("cosmosvaloper1xcy3els9ua75kdm783c3qu0rfa2eples6eavqq")

@@ -35,6 +35,11 @@ func (k Keeper) AddVote(ctx context.Context, proposalID uint64, voterAddr sdk.Ac
 		return err
 	}
 
+	err = k.assertVoteOptionsLen(options)
+	if err != nil {
+		return err
+	}
+
 	for _, option := range options {
 		switch proposal.ProposalType {
 		case v1.ProposalType_PROPOSAL_TYPE_OPTIMISTIC:
@@ -52,9 +57,9 @@ func (k Keeper) AddVote(ctx context.Context, proposalID uint64, voterAddr sdk.Ac
 			}
 
 			// verify votes only on existing votes
-			if proposalOptionsStr.OptionOne == "" && option.Option == v1.OptionOne { // should never trigger option one is always mandatory
+			if proposalOptionsStr.OptionOne == "" && option.Option == v1.OptionOne {
 				return errors.Wrap(types.ErrInvalidVote, "invalid vote option")
-			} else if proposalOptionsStr.OptionTwo == "" && option.Option == v1.OptionTwo { // should never trigger option two is always mandatory
+			} else if proposalOptionsStr.OptionTwo == "" && option.Option == v1.OptionTwo {
 				return errors.Wrap(types.ErrInvalidVote, "invalid vote option")
 			} else if proposalOptionsStr.OptionThree == "" && option.Option == v1.OptionThree {
 				return errors.Wrap(types.ErrInvalidVote, "invalid vote option")
@@ -83,7 +88,7 @@ func (k Keeper) AddVote(ctx context.Context, proposalID uint64, voterAddr sdk.Ac
 		return err
 	}
 
-	return k.environment.EventService.EventManager(ctx).EmitKV(types.EventTypeProposalVote,
+	return k.EventService.EventManager(ctx).EmitKV(types.EventTypeProposalVote,
 		event.NewAttribute(types.AttributeKeyVoter, voterStrAddr),
 		event.NewAttribute(types.AttributeKeyOption, options.String()),
 		event.NewAttribute(types.AttributeKeyProposalID, fmt.Sprintf("%d", proposalID)),

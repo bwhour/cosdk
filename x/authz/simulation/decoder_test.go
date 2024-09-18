@@ -27,7 +27,7 @@ func TestDecodeStore(t *testing.T) {
 
 	now := time.Now().UTC()
 	e := now.Add(1)
-	sendAuthz := banktypes.NewSendAuthorization(sdk.NewCoins(sdk.NewInt64Coin("foo", 123)), nil)
+	sendAuthz := banktypes.NewSendAuthorization(sdk.NewCoins(sdk.NewInt64Coin("foo", 123)), nil, codectestutil.CodecOptions{}.GetAddressCodec())
 	grant, _ := authz.NewGrant(now, sendAuthz, &e)
 	grantBz, err := encCfg.Codec.Marshal(&grant)
 	require.NoError(t, err)
@@ -48,7 +48,6 @@ func TestDecodeStore(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		i, tt := i, tt
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.expectErr {
 				require.Panics(t, func() { dec(kvPairs.Pairs[i], kvPairs.Pairs[i]) }, tt.name)

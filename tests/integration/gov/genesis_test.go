@@ -4,21 +4,21 @@ import (
 	"encoding/json"
 	"testing"
 
-	abci "github.com/cometbft/cometbft/abci/types"
-	dbm "github.com/cosmos/cosmos-db"
+	abci "github.com/cometbft/cometbft/api/cometbft/abci/v1"
 	"github.com/stretchr/testify/require"
 	"gotest.tools/v3/assert"
 
 	"cosmossdk.io/core/header"
+	corestore "cosmossdk.io/core/store"
+	coretesting "cosmossdk.io/core/testing"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
 	sdkmath "cosmossdk.io/math"
-	_ "cosmossdk.io/x/auth"
-	authkeeper "cosmossdk.io/x/auth/keeper"
-	authtypes "cosmossdk.io/x/auth/types"
+	_ "cosmossdk.io/x/accounts"
 	_ "cosmossdk.io/x/bank"
 	bankkeeper "cosmossdk.io/x/bank/keeper"
 	banktypes "cosmossdk.io/x/bank/types"
+	_ "cosmossdk.io/x/consensus"
 	"cosmossdk.io/x/gov"
 	"cosmossdk.io/x/gov/keeper"
 	"cosmossdk.io/x/gov/types"
@@ -32,7 +32,9 @@ import (
 	"github.com/cosmos/cosmos-sdk/testutil/configurator"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	_ "github.com/cosmos/cosmos-sdk/x/consensus"
+	_ "github.com/cosmos/cosmos-sdk/x/auth"
+	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
 type suite struct {
@@ -46,6 +48,7 @@ type suite struct {
 }
 
 var appConfig = configurator.NewAppConfig(
+	configurator.AccountsModule(),
 	configurator.AuthModule(),
 	configurator.StakingModule(),
 	configurator.BankModule(),
@@ -72,7 +75,7 @@ func TestImportExportQueues(t *testing.T) {
 	ctx := s1.app.BaseApp.NewContext(false)
 	addrs := simtestutil.AddTestAddrs(s1.BankKeeper, s1.StakingKeeper, ctx, 1, valTokens)
 
-	_, err = s1.app.FinalizeBlock(&abci.RequestFinalizeBlock{
+	_, err = s1.app.FinalizeBlock(&abci.FinalizeBlockRequest{
 		Height: s1.app.LastBlockHeight() + 1,
 	})
 	assert.NilError(t, err)
@@ -120,7 +123,7 @@ func TestImportExportQueues(t *testing.T) {
 	assert.NilError(t, err)
 
 	s2 := suite{}
-	db := dbm.NewMemDB()
+	db := coretesting.NewMemDB()
 	conf2 := simtestutil.DefaultStartUpConfig()
 	conf2.DB = db
 	s2.app, err = simtestutil.SetupWithConfiguration(
@@ -138,7 +141,7 @@ func TestImportExportQueues(t *testing.T) {
 	assert.NilError(t, err)
 
 	_, err = s2.app.InitChain(
-		&abci.RequestInitChain{
+		&abci.InitChainRequest{
 			Validators:      []abci.ValidatorUpdate{},
 			ConsensusParams: simtestutil.DefaultConsensusParams,
 			AppStateBytes:   stateBytes,
@@ -146,12 +149,12 @@ func TestImportExportQueues(t *testing.T) {
 	)
 	assert.NilError(t, err)
 
-	_, err = s2.app.FinalizeBlock(&abci.RequestFinalizeBlock{
+	_, err = s2.app.FinalizeBlock(&abci.FinalizeBlockRequest{
 		Height: s2.app.LastBlockHeight() + 1,
 	})
 	assert.NilError(t, err)
 
-	_, err = s2.app.FinalizeBlock(&abci.RequestFinalizeBlock{
+	_, err = s2.app.FinalizeBlock(&abci.FinalizeBlockRequest{
 		Height: s2.app.LastBlockHeight() + 1,
 	})
 	assert.NilError(t, err)
@@ -186,7 +189,7 @@ func TestImportExportQueues(t *testing.T) {
 	assert.Assert(t, proposal2.Status == v1.StatusRejected)
 }
 
-func clearDB(t *testing.T, db *dbm.MemDB) {
+func clearDB(t *testing.T, db corestore.KVStoreWithBatch) {
 	t.Helper()
 	iter, err := db.Iterator(nil, nil)
 	assert.NilError(t, err)

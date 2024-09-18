@@ -11,7 +11,6 @@ import (
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/event"
 	"cosmossdk.io/errors"
-	"cosmossdk.io/log"
 	"cosmossdk.io/x/evidence/exported"
 	"cosmossdk.io/x/evidence/types"
 
@@ -22,12 +21,14 @@ import (
 // managing persistence, state transitions and query handling for the evidence
 // module.
 type Keeper struct {
-	cdc            codec.BinaryCodec
-	environment    appmodule.Environment
-	router         types.Router
-	stakingKeeper  types.StakingKeeper
-	slashingKeeper types.SlashingKeeper
-	addressCodec   address.Codec
+	appmodule.Environment
+
+	cdc             codec.BinaryCodec
+	router          types.Router
+	stakingKeeper   types.StakingKeeper
+	slashingKeeper  types.SlashingKeeper
+	consensusKeeper types.ConsensusKeeper
+	addressCodec    address.Codec
 
 	Schema collections.Schema
 	// Evidences key: evidence hash bytes | value: Evidence
@@ -37,16 +38,17 @@ type Keeper struct {
 // NewKeeper creates a new Keeper object.
 func NewKeeper(
 	cdc codec.BinaryCodec, env appmodule.Environment, stakingKeeper types.StakingKeeper,
-	slashingKeeper types.SlashingKeeper, ac address.Codec,
+	slashingKeeper types.SlashingKeeper, ck types.ConsensusKeeper, ac address.Codec,
 ) *Keeper {
 	sb := collections.NewSchemaBuilder(env.KVStoreService)
 	k := &Keeper{
-		cdc:            cdc,
-		environment:    env,
-		stakingKeeper:  stakingKeeper,
-		slashingKeeper: slashingKeeper,
-		addressCodec:   ac,
-		Evidences:      collections.NewMap(sb, types.KeyPrefixEvidence, "evidences", collections.BytesKey, codec.CollInterfaceValue[exported.Evidence](cdc)),
+		Environment:     env,
+		cdc:             cdc,
+		stakingKeeper:   stakingKeeper,
+		slashingKeeper:  slashingKeeper,
+		consensusKeeper: ck,
+		addressCodec:    ac,
+		Evidences:       collections.NewMap(sb, types.KeyPrefixEvidence, "evidences", collections.BytesKey, codec.CollInterfaceValue[exported.Evidence](cdc)),
 	}
 	schema, err := sb.Build()
 	if err != nil {
@@ -54,11 +56,6 @@ func NewKeeper(
 	}
 	k.Schema = schema
 	return k
-}
-
-// Logger returns a module-specific logger.
-func (k Keeper) Logger() log.Logger {
-	return k.environment.Logger.With("module", "x/"+types.ModuleName)
 }
 
 // SetRouter sets the Evidence Handler router for the x/evidence module. Note,
@@ -106,7 +103,7 @@ func (k Keeper) SubmitEvidence(ctx context.Context, evidence exported.Evidence) 
 		return errors.Wrap(types.ErrInvalidEvidence, err.Error())
 	}
 
-	if err := k.environment.EventService.EventManager(ctx).EmitKV(
+	if err := k.EventService.EventManager(ctx).EmitKV(
 		types.EventTypeSubmitEvidence,
 		event.NewAttribute(types.AttributeKeyEvidenceHash, strings.ToUpper(hex.EncodeToString(evidence.Hash()))),
 	); err != nil {

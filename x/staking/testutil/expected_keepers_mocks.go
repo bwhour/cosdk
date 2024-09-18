@@ -12,7 +12,6 @@ import (
 	address "cosmossdk.io/core/address"
 	math "cosmossdk.io/math"
 	types "cosmossdk.io/x/staking/types"
-	crypto "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	types0 "github.com/cosmos/cosmos-sdk/crypto/types"
 	types1 "github.com/cosmos/cosmos-sdk/types"
 	gomock "github.com/golang/mock/gomock"
@@ -202,6 +201,20 @@ func (mr *MockBankKeeperMockRecorder) GetSupply(ctx, denom interface{}) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSupply", reflect.TypeOf((*MockBankKeeper)(nil).GetSupply), ctx, denom)
 }
 
+// IsSendEnabledDenom mocks base method.
+func (m *MockBankKeeper) IsSendEnabledDenom(ctx context.Context, denom string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsSendEnabledDenom", ctx, denom)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsSendEnabledDenom indicates an expected call of IsSendEnabledDenom.
+func (mr *MockBankKeeperMockRecorder) IsSendEnabledDenom(ctx, denom interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSendEnabledDenom", reflect.TypeOf((*MockBankKeeper)(nil).IsSendEnabledDenom), ctx, denom)
+}
+
 // LockedCoins mocks base method.
 func (m *MockBankKeeper) LockedCoins(ctx context.Context, addr types1.AccAddress) types1.Coins {
 	m.ctrl.T.Helper()
@@ -311,10 +324,10 @@ func (mr *MockValidatorSetMockRecorder) Delegation(arg0, arg1, arg2 interface{})
 }
 
 // GetPubKeyByConsAddr mocks base method.
-func (m *MockValidatorSet) GetPubKeyByConsAddr(arg0 context.Context, arg1 types1.ConsAddress) (crypto.PublicKey, error) {
+func (m *MockValidatorSet) GetPubKeyByConsAddr(arg0 context.Context, arg1 types1.ConsAddress) (types0.PubKey, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetPubKeyByConsAddr", arg0, arg1)
-	ret0, _ := ret[0].(crypto.PublicKey)
+	ret0, _ := ret[0].(types0.PubKey)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -726,4 +739,42 @@ func (m *MockStakingHooks) BeforeValidatorSlashed(ctx context.Context, valAddr t
 func (mr *MockStakingHooksMockRecorder) BeforeValidatorSlashed(ctx, valAddr, fraction interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeforeValidatorSlashed", reflect.TypeOf((*MockStakingHooks)(nil).BeforeValidatorSlashed), ctx, valAddr, fraction)
+}
+
+// MockConsensusKeeper is a mock of ConsensusKeeper interface.
+type MockConsensusKeeper struct {
+	ctrl     *gomock.Controller
+	recorder *MockConsensusKeeperMockRecorder
+}
+
+// MockConsensusKeeperMockRecorder is the mock recorder for MockConsensusKeeper.
+type MockConsensusKeeperMockRecorder struct {
+	mock *MockConsensusKeeper
+}
+
+// NewMockConsensusKeeper creates a new mock instance.
+func NewMockConsensusKeeper(ctrl *gomock.Controller) *MockConsensusKeeper {
+	mock := &MockConsensusKeeper{ctrl: ctrl}
+	mock.recorder = &MockConsensusKeeperMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockConsensusKeeper) EXPECT() *MockConsensusKeeperMockRecorder {
+	return m.recorder
+}
+
+// ValidatorPubKeyTypes mocks base method.
+func (m *MockConsensusKeeper) ValidatorPubKeyTypes(arg0 context.Context) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ValidatorPubKeyTypes", arg0)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ValidatorPubKeyTypes indicates an expected call of ValidatorPubKeyTypes.
+func (mr *MockConsensusKeeperMockRecorder) ValidatorPubKeyTypes(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidatorPubKeyTypes", reflect.TypeOf((*MockConsensusKeeper)(nil).ValidatorPubKeyTypes), arg0)
 }

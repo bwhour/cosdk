@@ -5,9 +5,9 @@ import (
 	"sync"
 	"testing"
 
-	dbm "github.com/cosmos/cosmos-db"
 	"github.com/stretchr/testify/require"
 
+	coretesting "cosmossdk.io/core/testing"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
 
@@ -107,7 +107,7 @@ func TestRegisterQueryServiceTwice(t *testing.T) {
 		),
 		&appBuilder)
 	require.NoError(t, err)
-	db := dbm.NewMemDB()
+	db := coretesting.NewMemDB()
 	app := appBuilder.Build(db, nil)
 
 	// First time registering service shouldn't panic.
@@ -168,7 +168,7 @@ func testQueryDataRacesSameHandler(t *testing.T, makeClientConn func(*baseapp.GR
 	qr := baseapp.NewGRPCQueryRouter()
 	interfaceRegistry := testdata.NewTestInterfaceRegistry()
 	qr.SetInterfaceRegistry(interfaceRegistry)
-	testdata.RegisterQueryServer(qr, testdata.QueryImpl{})
+	testdata_pulsar.RegisterQueryServer(qr, testdata_pulsar.QueryImpl{})
 
 	// The goal is to invoke the router concurrently and check for any data races.
 	// 0. Run with: go test -race

@@ -7,7 +7,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
-func (s *IntegrationTestSuite) TestUpdateParams() {
+func (s *KeeperTestSuite) TestUpdateParams() {
 	testCases := []struct {
 		name      string
 		request   *types.MsgUpdateParams
@@ -53,6 +53,7 @@ func (s *IntegrationTestSuite) TestUpdateParams() {
 					InflationMin:        sdkmath.LegacyNewDecWithPrec(2, 2),
 					GoalBonded:          sdkmath.LegacyNewDecWithPrec(37, 2),
 					BlocksPerYear:       uint64(60 * 60 * 8766 / 5),
+					MaxSupply:           sdkmath.ZeroInt(), // infinite supply
 				},
 			},
 			expectErr: false,
@@ -60,7 +61,6 @@ func (s *IntegrationTestSuite) TestUpdateParams() {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		s.Run(tc.name, func() {
 			_, err := s.msgServer.UpdateParams(s.ctx, tc.request)
 			if tc.expectErr {

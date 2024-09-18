@@ -3,6 +3,7 @@ package ante
 import (
 	"fmt"
 
+	"cosmossdk.io/core/appmodule"
 	errorsmod "cosmossdk.io/errors"
 	storetypes "cosmossdk.io/store/types"
 
@@ -21,10 +22,16 @@ type GasTx interface {
 // on gas provided and gas used.
 // CONTRACT: Must be first decorator in the chain
 // CONTRACT: Tx must implement GasTx interface
-type SetUpContextDecorator struct{}
+type SetUpContextDecorator struct {
+	env             appmodule.Environment
+	consensusKeeper ConsensusKeeper
+}
 
-func NewSetUpContextDecorator() SetUpContextDecorator {
-	return SetUpContextDecorator{}
+func NewSetUpContextDecorator(env appmodule.Environment, consensusKeeper ConsensusKeeper) SetUpContextDecorator {
+	return SetUpContextDecorator{
+		env:             env,
+		consensusKeeper: consensusKeeper,
+	}
 }
 
 func (sud SetUpContextDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, _ bool, next sdk.AnteHandler) (newCtx sdk.Context, err error) {
@@ -39,12 +46,13 @@ func (sud SetUpContextDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, _ bool, 
 
 	newCtx = SetGasMeter(ctx, gasTx.GetGas())
 
-	if cp := ctx.ConsensusParams(); cp.Block != nil {
-		// If there exists a maximum block gas limit, we must ensure that the tx
-		// does not exceed it.
-		if cp.Block.MaxGas > 0 && gasTx.GetGas() > uint64(cp.Block.MaxGas) {
-			return newCtx, errorsmod.Wrapf(sdkerrors.ErrInvalidGasLimit, "tx gas limit %d exceeds block max gas %d", gasTx.GetGas(), cp.Block.MaxGas)
-		}
+	maxGas, _, err := sud.consensusKeeper.BlockParams(ctx)
+	if err != nil {
+		return newCtx, err
+	}
+
+	if maxGas > 0 && gasTx.GetGas() > maxGas {
+		return newCtx, errorsmod.Wrapf(sdkerrors.ErrInvalidGasLimit, "tx gas limit %d exceeds block max gas %d", gasTx.GetGas(), maxGas)
 	}
 
 	// Decorator will catch an OutOfGasPanic caused in the next antehandler
@@ -67,14 +75,14 @@ func (sud SetUpContextDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, _ bool, 
 		}
 	}()
 
-	return next(newCtx, tx, ctx.ExecMode() == sdk.ExecModeSimulate)
+	return next(newCtx, tx, false)
 }
 
 // SetGasMeter returns a new context with a gas meter set from a given context.
 func SetGasMeter(ctx sdk.Context, gasLimit uint64) sdk.Context {
 	// In various cases such as simulation and during the genesis block, we do not
 	// meter any gas utilization.
-	if ctx.ExecMode() == sdk.ExecModeSimulate || ctx.BlockHeight() == 0 {
+	if ctx.ExecMode() == sdk.ExecModeSimulate || ctx.BlockHeight() == 0 { // NOTE: using environment here breaks the API of SetGasMeter, an alternative must be found for server/v2. ref: https://github.com/cosmos/cosmos-sdk/issues/19640
 		return ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
 	}
 

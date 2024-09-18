@@ -87,7 +87,6 @@ gas-adjustment = {{ .GasConfig.GasAdjustment }}
 # Memo to include in all transactions.
 note = "{{ .Note }}"
 `
-
 	t.Run("custom template and config provided", func(t *testing.T) {
 		clientCtx, cleanup, err := initClientContextWithTemplate(t, "", customClientConfigTemplate, customClientConfig)
 		defer func() {
@@ -146,7 +145,6 @@ func TestConfigCmdEnvFlag(t *testing.T) {
 	}
 
 	for _, tc := range tt {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			testCmd := &cobra.Command{
 				Use: "test",
@@ -180,4 +178,24 @@ func TestConfigCmdEnvFlag(t *testing.T) {
 			require.Contains(t, err.Error(), tc.expNode)
 		})
 	}
+}
+
+func TestGRPCConfig(t *testing.T) {
+	expectedGRPCConfig := config.GRPCConfig{
+		Address:  "localhost:7070",
+		Insecure: true,
+	}
+
+	clientCfg := config.DefaultConfig()
+	clientCfg.GRPC = expectedGRPCConfig
+
+	t.Run("custom template with gRPC config", func(t *testing.T) {
+		clientCtx, cleanup, err := initClientContextWithTemplate(t, "", config.DefaultClientConfigTemplate, clientCfg)
+		defer cleanup()
+
+		require.NoError(t, err)
+
+		require.Equal(t, expectedGRPCConfig.Address, clientCtx.Viper.GetString("grpc-address"))
+		require.Equal(t, expectedGRPCConfig.Insecure, clientCtx.Viper.GetBool("grpc-insecure"))
+	})
 }

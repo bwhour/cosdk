@@ -1,6 +1,7 @@
 package simulation_test
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 
@@ -10,12 +11,13 @@ import (
 	"cosmossdk.io/x/bank/types"
 
 	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/address"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
 )
 
 func TestProposalMsgs(t *testing.T) {
+	ac := codectestutil.CodecOptions{}.GetAddressCodec()
+
 	// initialize parameters
 	s := rand.NewSource(1)
 	r := rand.New(s)
@@ -32,12 +34,14 @@ func TestProposalMsgs(t *testing.T) {
 	assert.Equal(t, simulation.OpWeightMsgUpdateParams, w0.AppParamsKey())
 	assert.Equal(t, simulation.DefaultWeightMsgUpdateParams, w0.DefaultWeight())
 
-	msg, err := w0.MsgSimulatorFn()(r, accounts, codectestutil.CodecOptions{}.GetAddressCodec())
+	msg, err := w0.MsgSimulatorFn()(context.Background(), r, accounts, ac)
 	assert.NilError(t, err)
 	msgUpdateParams, ok := msg.(*types.MsgUpdateParams)
 	assert.Assert(t, ok)
 
-	assert.Equal(t, sdk.AccAddress(address.Module("gov")).String(), msgUpdateParams.Authority)
+	authority, err := ac.BytesToString(address.Module(types.GovModuleName))
+	assert.NilError(t, err)
+	assert.Equal(t, authority, msgUpdateParams.Authority)
 	assert.Assert(t, len(msgUpdateParams.Params.SendEnabled) == 0) //nolint:staticcheck // we're testing the old way here
 	assert.Equal(t, true, msgUpdateParams.Params.DefaultSendEnabled)
 }
