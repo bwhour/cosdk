@@ -79,7 +79,7 @@ func initCometConfig() cometbft.CfgOption {
 	cfg := cmtcfg.DefaultConfig()
 
 	// display only warn logs by default except for p2p and state
-	cfg.LogLevel = "*:warn,p2p:info,state:info"
+	cfg.LogLevel = "*:warn,server:info,p2p:info,state:info"
 	// increase block timeout
 	cfg.Consensus.TimeoutCommit = 5 * time.Second
 	// overwrite default pprof listen address
@@ -91,13 +91,11 @@ func initCometConfig() cometbft.CfgOption {
 func initCometOptions[T transaction.Tx]() cometbft.ServerOptions[T] {
 	serverOptions := cometbft.DefaultServerOptions[T]()
 
-	// TODO mempool interface doesn't match!
-
 	// overwrite app mempool, using max-txs option
 	// serverOptions.Mempool = func(cfg map[string]any) mempool.Mempool[T] {
 	// 	if maxTxs := cast.ToInt(cfg[cometbft.FlagMempoolMaxTxs]); maxTxs >= 0 {
-	// 		return mempool.NewSenderNonceMempool(
-	// 			mempool.SenderNonceMaxTxOpt(maxTxs),
+	// 		return sdkmempool.NewSenderNonceMempool(
+	// 			sdkmempool.SenderNonceMaxTxOpt(maxTxs),
 	// 		)
 	// 	}
 

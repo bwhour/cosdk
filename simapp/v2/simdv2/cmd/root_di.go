@@ -14,13 +14,15 @@ import (
 	"cosmossdk.io/log"
 	"cosmossdk.io/runtime/v2"
 	"cosmossdk.io/simapp/v2"
+	basedepinject "cosmossdk.io/x/accounts/defaults/base/depinject"
+	lockupdepinject "cosmossdk.io/x/accounts/defaults/lockup/depinject"
+	multisigdepinject "cosmossdk.io/x/accounts/defaults/multisig/depinject"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/config"
 	nodeservice "github.com/cosmos/cosmos-sdk/client/grpc/node"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	"github.com/cosmos/cosmos-sdk/std"
 	"github.com/cosmos/cosmos-sdk/x/auth/tx"
 	authtxconfig "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
 	"github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -37,18 +39,16 @@ func NewRootCmd[T transaction.Tx]() *cobra.Command {
 	if err := depinject.Inject(
 		depinject.Configs(
 			simapp.AppConfig(),
-			depinject.Supply(log.NewNopLogger()),
 			depinject.Provide(
-				codec.ProvideInterfaceRegistry,
-				codec.ProvideAddressCodec,
-				codec.ProvideProtoCodec,
-				codec.ProvideLegacyAmino,
 				ProvideClientContext,
-			),
-			depinject.Invoke(
-				std.RegisterInterfaces,
-				std.RegisterLegacyAminoCodec,
-			),
+				// inject desired account types:
+				multisigdepinject.ProvideAccount,
+				basedepinject.ProvideAccount,
+				lockupdepinject.ProvideAllLockupAccounts,
+
+				// provide base account options
+				basedepinject.ProvideSecp256K1PubKey),
+			depinject.Supply(log.NewNopLogger()),
 		),
 		&autoCliOpts,
 		&moduleManager,

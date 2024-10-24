@@ -7,8 +7,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
+	"go.uber.org/mock/gomock"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/log"
@@ -74,8 +74,8 @@ func Example() {
 
 	// here bankkeeper and staking keeper is nil because we are not testing them
 	// subspace is nil because we don't test params (which is legacy anyway)
-	mintKeeper := mintkeeper.NewKeeper(encodingCfg.Codec, runtime.NewEnvironment(runtime.NewKVStoreService(keys[minttypes.StoreKey]), logger), nil, accountKeeper, nil, authtypes.FeeCollectorName, authority)
-	mintModule := mint.NewAppModule(encodingCfg.Codec, mintKeeper, accountKeeper, nil)
+	mintKeeper := mintkeeper.NewKeeper(encodingCfg.Codec, runtime.NewEnvironment(runtime.NewKVStoreService(keys[minttypes.StoreKey]), logger), accountKeeper, nil, authtypes.FeeCollectorName, authority)
+	mintModule := mint.NewAppModule(encodingCfg.Codec, mintKeeper, accountKeeper)
 
 	// create the application and register all the modules from the previous step
 	integrationApp := integration.NewIntegrationApp(

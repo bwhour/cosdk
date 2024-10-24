@@ -5,7 +5,7 @@ import (
 	"io"
 
 	cmtproto "github.com/cometbft/cometbft/api/cometbft/types/v1"
-	cmttypes "github.com/cometbft/cometbft/types"
+	cmtcrypto "github.com/cometbft/cometbft/crypto"
 	"github.com/cosmos/gogoproto/grpc"
 
 	"cosmossdk.io/core/server"
@@ -17,6 +17,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/server/api"
 	"github.com/cosmos/cosmos-sdk/server/config"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 type (
@@ -57,6 +58,9 @@ type (
 		// SnapshotManager return the snapshot manager
 		SnapshotManager() *snapshots.Manager
 
+		// ValidatorKeyProvider returns a function that generates a validator key
+		ValidatorKeyProvider() func() (cmtcrypto.PrivKey, error)
+
 		// Close is called in start cmd to gracefully cleanup resources.
 		// Must be safe to be called multiple times.
 		Close() error
@@ -72,7 +76,7 @@ type (
 		// AppState is the application state as JSON.
 		AppState json.RawMessage
 		// Validators is the exported validator set.
-		Validators []cmttypes.GenesisValidator
+		Validators []sdk.GenesisValidator
 		// Height is the app's latest block height.
 		Height int64
 		// ConsensusParams are the exported consensus params for ABCI.

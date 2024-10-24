@@ -12,7 +12,13 @@ import (
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
 	"cosmossdk.io/runtime/v2"
+	serverstore "cosmossdk.io/server/v2/store"
+	"cosmossdk.io/store/v2"
 	"cosmossdk.io/store/v2/root"
+	basedepinject "cosmossdk.io/x/accounts/defaults/base/depinject"
+	lockupdepinject "cosmossdk.io/x/accounts/defaults/lockup/depinject"
+	multisigdepinject "cosmossdk.io/x/accounts/defaults/multisig/depinject"
+	stakingkeeper "cosmossdk.io/x/staking/keeper"
 	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -34,10 +40,12 @@ type SimApp[T transaction.Tx] struct {
 	appCodec          codec.Codec
 	txConfig          client.TxConfig
 	interfaceRegistry codectypes.InterfaceRegistry
+	store             store.RootStore
 
 	// required keepers during wiring
 	// others keepers are all in the app
 	UpgradeKeeper *upgradekeeper.Keeper
+	StakingKeeper *stakingkeeper.Keeper
 }
 
 func init() {
@@ -52,6 +60,17 @@ func init() {
 func AppConfig() depinject.Config {
 	return depinject.Configs(
 		appConfig, // Alternatively use appconfig.LoadYAML(AppConfigYAML)
+		runtime.DefaultServiceBindings(),
+		depinject.Provide(
+			codec.ProvideInterfaceRegistry,
+			codec.ProvideAddressCodec,
+			codec.ProvideProtoCodec,
+			codec.ProvideLegacyAmino,
+		),
+		depinject.Invoke(
+			std.RegisterInterfaces,
+			std.RegisterLegacyAminoCodec,
+		),
 	)
 }
 
@@ -64,7 +83,7 @@ func NewSimApp[T transaction.Tx](
 		app          = &SimApp[T]{}
 		appBuilder   *runtime.AppBuilder[T]
 		err          error
-		storeOptions = &root.Options{}
+		storeBuilder root.Builder
 
 		// merge the AppConfig and other configuration in one config
 		appConfig = depinject.Configs(
@@ -114,38 +133,54 @@ func NewSimApp[T transaction.Tx](
 				// interface.
 			),
 			depinject.Provide(
-				codec.ProvideInterfaceRegistry,
-				codec.ProvideAddressCodec,
-				codec.ProvideProtoCodec,
-				codec.ProvideLegacyAmino,
-			),
-			depinject.Invoke(
-				std.RegisterInterfaces,
-				std.RegisterLegacyAminoCodec,
+				// inject desired account types:
+				multisigdepinject.ProvideAccount,
+				basedepinject.ProvideAccount,
+				lockupdepinject.ProvideAllLockupAccounts,
+
+				// provide base account options
+				basedepinject.ProvideSecp256K1PubKey,
+				// if you want to provide a custom public key you
+				// can do it from here.
+				// Example:
+				// 		basedepinject.ProvideCustomPubkey[Ed25519PublicKey]()
+				//
+				// You can also provide a custom public key with a custom validation function:
+				//
+				// 		basedepinject.ProvideCustomPubKeyAndValidationFunc(func(pub Ed25519PublicKey) error {
+				//			if len(pub.Key) != 64 {
+				//				return fmt.Errorf("invalid pub key size")
+				//			}
+				// 		})
 			),
 		)
 	)
 
 	if err := depinject.Inject(appConfig,
+		&storeBuilder,
 		&appBuilder,
 		&app.appCodec,
 		&app.legacyAmino,
 		&app.txConfig,
 		&app.interfaceRegistry,
 		&app.UpgradeKeeper,
+		&app.StakingKeeper,
 	); err != nil {
 		panic(err)
 	}
 
-	var builderOpts []runtime.AppBuilderOption[T]
-	if sub := viper.Sub("store.options"); sub != nil {
-		err = sub.Unmarshal(storeOptions)
-		if err != nil {
-			panic(err)
-		}
-		builderOpts = append(builderOpts, runtime.AppBuilderWithStoreOptions[T](storeOptions))
+	// store/v2 follows a slightly more eager config life cycle than server components
+	storeConfig, err := serverstore.UnmarshalConfig(viper.AllSettings())
+	if err != nil {
+		panic(err)
 	}
-	app.App, err = appBuilder.Build(builderOpts...)
+
+	app.store, err = storeBuilder.Build(logger, storeConfig)
+	if err != nil {
+		panic(err)
+	}
+
+	app.App, err = appBuilder.Build()
 	if err != nil {
 		panic(err)
 	}
@@ -183,7 +218,16 @@ func (app *SimApp[T]) TxConfig() client.TxConfig {
 	return app.txConfig
 }
 
-// GetStore gets the app store.
-func (app *SimApp[T]) GetStore() any {
-	return app.App.GetStore()
+// Store returns the root store.
+func (app *SimApp[T]) Store() store.RootStore {
+	return app.store
+}
+
+// Close overwrites the base Close method to close the stores.
+func (app *SimApp[T]) Close() error {
+	if err := app.store.Close(); err != nil {
+		return err
+	}
+
+	return app.App.Close()
 }

@@ -13,9 +13,9 @@ import (
 	protoio "github.com/cosmos/gogoproto/io"
 	"github.com/cosmos/gogoproto/proto"
 	gogotypes "github.com/cosmos/gogoproto/types"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/mock/gomock"
 
 	"cosmossdk.io/core/address"
 	"cosmossdk.io/core/comet"
@@ -691,6 +691,7 @@ func (s *ABCIUtilsTestSuite) TestDefaultProposalHandler_PriorityNonceMempoolTxSe
 			ph := baseapp.NewDefaultProposalHandler(mp, app)
 
 			for _, v := range tc.txInputs {
+				app.EXPECT().TxDecode(v.bz).Return(v.tx, nil).AnyTimes()
 				app.EXPECT().PrepareProposalVerifyTx(v.tx).Return(v.bz, nil).AnyTimes()
 				s.NoError(mp.Insert(s.ctx.WithPriority(v.priority), v.tx))
 				tc.req.Txs = append(tc.req.Txs, v.bz)

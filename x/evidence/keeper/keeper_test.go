@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/mock/gomock"
 
 	"cosmossdk.io/collections"
 	coreaddress "cosmossdk.io/core/address"
@@ -111,6 +111,7 @@ func (suite *KeeperTestSuite) SetupTest() {
 		slashingKeeper,
 		ck,
 		address.NewBech32Codec("cosmos"),
+		address.NewBech32Codec("cosmosvalcons"),
 	)
 
 	suite.stakingKeeper = stakingKeeper

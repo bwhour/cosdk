@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
+	"go.uber.org/mock/gomock"
 	"gotest.tools/v3/assert"
 
 	"cosmossdk.io/collections"
@@ -154,7 +154,7 @@ func initFixture(tb testing.TB) *fixture {
 
 	stakingKeeper.SetHooks(stakingtypes.NewMultiStakingHooks(slashingKeeper.Hooks()))
 
-	evidenceKeeper := keeper.NewKeeper(cdc, runtime.NewEnvironment(runtime.NewKVStoreService(keys[evidencetypes.StoreKey]), log.NewNopLogger(), runtime.EnvWithQueryRouterService(grpcQueryRouter), runtime.EnvWithMsgRouterService(msgRouter)), stakingKeeper, slashingKeeper, consensusParamsKeeper, addresscodec.NewBech32Codec(sdk.Bech32PrefixAccAddr))
+	evidenceKeeper := keeper.NewKeeper(cdc, runtime.NewEnvironment(runtime.NewKVStoreService(keys[evidencetypes.StoreKey]), log.NewNopLogger(), runtime.EnvWithQueryRouterService(grpcQueryRouter), runtime.EnvWithMsgRouterService(msgRouter)), stakingKeeper, slashingKeeper, consensusParamsKeeper, addresscodec.NewBech32Codec(sdk.Bech32PrefixAccAddr), stakingKeeper.ConsensusAddressCodec())
 	router := evidencetypes.NewRouter()
 	router = router.AddRoute(evidencetypes.RouteEquivocation, testEquivocationHandler(evidenceKeeper))
 	evidenceKeeper.SetRouter(router)

@@ -485,6 +485,33 @@ func (s *StorageTestSuite) TestDatabaseIterator_ForwardIterationHigher() {
 	s.Require().Equal(0, count)
 }
 
+func (s *StorageTestSuite) TestDatabaseIterator_WithDelete() {
+	db, err := s.NewDB(s.T().TempDir())
+	s.Require().NoError(err)
+	defer db.Close()
+
+	dbApplyChangeset(s.T(), db, 1, storeKey1, [][]byte{[]byte("keyA")}, [][]byte{[]byte("value001")})
+	dbApplyChangeset(s.T(), db, 2, storeKey1, [][]byte{[]byte("keyA")}, [][]byte{nil}) // delete
+
+	itr, err := db.Iterator(storeKey1Bytes, 1, nil, nil)
+	s.Require().NoError(err)
+
+	count := 0
+	for ; itr.Valid(); itr.Next() {
+		count++
+	}
+	s.Require().Equal(1, count)
+
+	itr, err = db.Iterator(storeKey1Bytes, 2, nil, nil)
+	s.Require().NoError(err)
+
+	count = 0
+	for ; itr.Valid(); itr.Next() {
+		count++
+	}
+	s.Require().Equal(0, count)
+}
+
 func (s *StorageTestSuite) TestDatabase_IteratorNoDomain() {
 	db, err := s.NewDB(s.T().TempDir())
 	s.Require().NoError(err)
@@ -853,9 +880,149 @@ func (s *StorageTestSuite) TestRemovingOldStoreKey() {
 	}
 }
 
+// TestVersionExists tests the VersionExists method of the Database struct.
+func (s *StorageTestSuite) TestVersionExists() {
+	// Define test cases
+	testCases := []struct {
+		name           string
+		setup          func(t *testing.T, db *StorageStore)
+		version        uint64
+		expectedExists bool
+		expectError    bool
+	}{
+		{
+			name: "Fresh database: version 0 exists",
+			setup: func(t *testing.T, db *StorageStore) {
+				t.Helper()
+				// No setup needed for fresh database
+			},
+			version:        0,
+			expectedExists: true,
+			expectError:    false,
+		},
+		{
+			name: "Fresh database: version 1 exists",
+			setup: func(t *testing.T, db *StorageStore) {
+				t.Helper()
+				// No setup needed for fresh database
+			},
+			version:        1,
+			expectedExists: false,
+			expectError:    false,
+		},
+		{
+			name: "After setting latest version to 10, version 5 exists",
+			setup: func(t *testing.T, db *StorageStore) {
+				t.Helper()
+				err := db.SetLatestVersion(10)
+				if err != nil {
+					t.Fatalf("Setting latest version should not error: %v", err)
+				}
+			},
+			version:        5,
+			expectedExists: true, // Since pruning hasn't occurred, earliestVersion is still 0
+			expectError:    false,
+		},
+		{
+			name: "After setting latest version to 10 and pruning to 5, version 4 does not exist",
+			setup: func(t *testing.T, db *StorageStore) {
+				t.Helper()
+				err := db.SetLatestVersion(10)
+				if err != nil {
+					t.Fatalf("Setting latest version should not error: %v", err)
+				}
+
+				err = db.Prune(5)
+				if err != nil {
+					t.Fatalf("Pruning to version 5 should not error: %v", err)
+				}
+			},
+			version:        4,
+			expectedExists: false,
+			expectError:    false,
+		},
+		{
+			name: "After setting latest version to 10 and pruning to 5, version 5 does not exist",
+			setup: func(t *testing.T, db *StorageStore) {
+				t.Helper()
+				err := db.SetLatestVersion(10)
+				if err != nil {
+					t.Fatalf("Setting latest version should not error: %v", err)
+				}
+
+				err = db.Prune(5)
+				if err != nil {
+					t.Fatalf("Pruning to version 5 should not error: %v", err)
+				}
+			},
+			version:        5,
+			expectedExists: false,
+			expectError:    false,
+		},
+		{
+			name: "After setting latest version to 10 and pruning to 5, version 6 exists",
+			setup: func(t *testing.T, db *StorageStore) {
+				t.Helper()
+				err := db.SetLatestVersion(10)
+				if err != nil {
+					t.Fatalf("Setting latest version should not error: %v", err)
+				}
+
+				err = db.Prune(5)
+				if err != nil {
+					t.Fatalf("Pruning to version 5 should not error: %v", err)
+				}
+			},
+			version:        6,
+			expectedExists: true,
+			expectError:    false,
+		},
+		{
+			name: "After pruning to 0, all versions >=1 exist",
+			setup: func(t *testing.T, db *StorageStore) {
+				t.Helper()
+				err := db.SetLatestVersion(10)
+				if err != nil {
+					t.Fatalf("Setting latest version should not error: %v", err)
+				}
+				// Prune to version 0
+				err = db.Prune(0)
+				if err != nil {
+					t.Fatalf("Pruning to version 0 should not error: %v", err)
+				}
+			},
+			version:        1,
+			expectedExists: true,
+			expectError:    false,
+		},
+	}
+
+	// Iterate over each test case
+	for _, tc := range testCases {
+		s.T().Run(tc.name, func(t *testing.T) {
+			// Initialize the database for each test
+			db, err := s.NewDB(t.TempDir())
+			require.NoError(t, err, "Failed to initialize the database")
+			defer db.Close()
+
+			// Setup test environment
+			tc.setup(t, db)
+
+			// Call VersionExists and check the result
+			exists, err := db.VersionExists(tc.version)
+			if tc.expectError {
+				require.Error(t, err, "Expected error but got none")
+			} else {
+				require.NoError(t, err, "Did not expect an error but got one")
+				require.Equal(t, tc.expectedExists, exists, "Version existence mismatch")
+			}
+		})
+	}
+}
+
 func dbApplyChangeset(
 	t *testing.T,
-	db store.VersionedDatabase,
+	db store.VersionedWriter,
 	version uint64,
 	storeKey string,
 	keys, vals [][]byte,
