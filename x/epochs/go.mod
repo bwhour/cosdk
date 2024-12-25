@@ -5,8 +5,8 @@ go 1.23.1
 require (
 	cosmossdk.io/api v0.7.6
 	cosmossdk.io/collections v0.4.0
-	cosmossdk.io/core v1.0.0-alpha.4
-	cosmossdk.io/core/testing v0.0.0-20240923163230-04da382a9f29
+	cosmossdk.io/core v1.0.0-alpha.6
+	cosmossdk.io/core/testing v0.0.1
 	cosmossdk.io/depinject v1.0.0
 	cosmossdk.io/errors v1.0.1
 	cosmossdk.io/store v1.1.1-0.20240418092142-896cdf1971bc
@@ -20,7 +20,7 @@ require (
 	google.golang.org/grpc v1.67.1
 )
 
-require cosmossdk.io/schema v0.3.1-0.20240930054013-7c6e0388a3f9 // indirect
+require cosmossdk.io/schema v0.4.0 // indirect
 
 require (
 	buf.build/gen/go/cometbft/cometbft/protocolbuffers/go v1.35.1-20240701160653-fedbb9acfd2f.1 // indirect
