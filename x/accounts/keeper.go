@@ -18,6 +18,7 @@ import (
 	"cosmossdk.io/x/accounts/accountstd"
 	"cosmossdk.io/x/accounts/internal/implementation"
 	v1 "cosmossdk.io/x/accounts/v1"
+	txdecode "cosmossdk.io/x/tx/decode"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -48,19 +49,27 @@ func NewKeeper(
 	env appmodule.Environment,
 	addressCodec address.Codec,
 	ir InterfaceRegistry,
+	txDecoder *txdecode.Decoder,
 	accounts ...accountstd.AccountCreatorFunc,
 ) (Keeper, error) {
 	sb := collections.NewSchemaBuilder(env.KVStoreService)
 	keeper := Keeper{
 		Environment:      env,
-		codec:            cdc,
+		txDecoder:        txDecoder,
 		addressCodec:     addressCodec,
+		codec:            cdc,
 		makeSendCoinsMsg: defaultCoinsTransferMsgFunc(addressCodec),
+		accounts:         nil,
 		Schema:           collections.Schema{},
 		AccountNumber:    collections.NewSequence(sb, AccountNumberKey, "account_number"),
-		AccountsByType:   collections.NewMap(sb, AccountTypeKeyPrefix, "accounts_by_type", collections.BytesKey, collections.StringValue),
-		AccountByNumber:  collections.NewMap(sb, AccountByNumber, "account_by_number", collections.BytesKey, collections.Uint64Value),
-		AccountsState:    collections.NewMap(sb, implementation.AccountStatePrefix, "accounts_state", collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), collections.BytesValue),
+		AccountsByType:   collections.NewMap(sb, AccountTypeKeyPrefix, "accounts_by_type", collections.BytesKey.WithName("address"), collections.StringValue.WithName("type")),
+		AccountByNumber:  collections.NewMap(sb, AccountByNumber, "account_by_number", collections.BytesKey.WithName("address"), collections.Uint64Value.WithName("number")),
+		AccountsState: collections.NewMap(sb, implementation.AccountStatePrefix, "accounts_state", collections.NamedPairKeyCodec(
+			"number",
+			collections.Uint64Key,
+			"key",
+			collections.BytesKey,
+		), collections.BytesValue),
 	}
 
 	schema, err := sb.Build()
@@ -79,6 +88,7 @@ func NewKeeper(
 type Keeper struct {
 	appmodule.Environment
 
+	txDecoder        *txdecode.Decoder
 	addressCodec     address.Codec
 	codec            codec.Codec
 	makeSendCoinsMsg coinsTransferMsgFunc
@@ -99,6 +109,8 @@ type Keeper struct {
 	// Account set and get their own state but this helps providing a nice mapping
 	// between: (account number, account state key) => account state value.
 	AccountsState collections.Map[collections.Pair[uint64, []byte], []byte]
+
+	bundlingDisabled bool // if this is set then bundling of txs is disallowed.
 }
 
 // IsAccountsModuleAccount check if an address belong to a smart account.
@@ -141,6 +153,7 @@ func (k Keeper) Init(
 	creator []byte,
 	initRequest transaction.Msg,
 	funds sdk.Coins,
+	addressSeed []byte,
 ) (transaction.Msg, []byte, error) {
 	// get the next account number
 	num, err := k.AccountNumber.Next(ctx)
@@ -148,7 +161,7 @@ func (k Keeper) Init(
 		return nil, nil, err
 	}
 	// create address
-	accountAddr, err := k.makeAddress(num)
+	accountAddr, err := k.makeAddress(creator, num, addressSeed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -173,7 +186,7 @@ func (k Keeper) initFromMsg(ctx context.Context, initMsg *v1.MsgInit) (transacti
 	}
 
 	// run account creation logic
-	return k.Init(ctx, initMsg.AccountType, creator, msg, initMsg.Funds)
+	return k.Init(ctx, initMsg.AccountType, creator, msg, initMsg.Funds, initMsg.AddressSeed)
 }
 
 // init initializes the account, given the type, the creator the newly created account number, its address and the
@@ -192,8 +205,17 @@ func (k Keeper) init(
 		return nil, fmt.Errorf("%w: not found %s", errAccountTypeNotFound, accountType)
 	}
 
+	// check if account exists
+	alreadyExists, err := k.AccountsByType.Has(ctx, accountAddr)
+	if err != nil {
+		return nil, err
+	}
+	if alreadyExists {
+		return nil, ErrAccountAlreadyExists
+	}
+
 	// send funds, if provided
-	err := k.maybeSendFunds(ctx, creator, accountAddr, funds)
+	err = k.maybeSendFunds(ctx, creator, accountAddr, funds)
 	if err != nil {
 		return nil, fmt.Errorf("unable to transfer funds: %w", err)
 	}
@@ -300,9 +322,26 @@ func (k Keeper) getImplementation(ctx context.Context, addr []byte) (implementat
 	return impl, nil
 }
 
-func (k Keeper) makeAddress(accNum uint64) ([]byte, error) {
-	// TODO: better address scheme, ref: https://github.com/cosmos/cosmos-sdk/issues/17516
-	addr := sha256.Sum256(append([]byte("x/accounts"), binary.BigEndian.AppendUint64(nil, accNum)...))
+// makeAddress creates an address for the given account.
+// It uses the creator address to ensure address squatting cannot happen, for example
+// assuming creator sends funds to a new account X nobody can front-run that address instantiation
+// unless the creator itself sends the tx.
+// AddressSeed can be used to create predictable addresses, security guarantees of the above are retained.
+// If address seed is not provided, the address is created using the creator and account number.
+func (k Keeper) makeAddress(creator []byte, accNum uint64, addressSeed []byte) ([]byte, error) {
+	// in case an address seed is provided, we use it to create the address.
+	var seed []byte
+	if len(addressSeed) > 0 {
+		seed = append(creator, addressSeed...)
+	} else {
+		// otherwise we use the creator and account number to create the address.
+		seed = append(creator, binary.BigEndian.AppendUint64(nil, accNum)...)
+	}
+
+	moduleAndSeed := append([]byte(ModuleName), seed...)
+
+	addr := sha256.Sum256(moduleAndSeed)
+
 	return addr[:], nil
 }
 
@@ -340,7 +379,6 @@ func (k Keeper) makeAccountContext(ctx context.Context, accountNumber uint64, ac
 
 // sendAnyMessages it a helper function that executes untyped codectypes.Any messages
 // The messages must all belong to a module.
-// nolint: unused // TODO: remove nolint when we bring back bundler payments
 func (k Keeper) sendAnyMessages(ctx context.Context, sender []byte, anyMessages []*implementation.Any) ([]*implementation.Any, error) {
 	anyResponses := make([]*implementation.Any, len(anyMessages))
 	for i := range anyMessages {
@@ -359,6 +397,37 @@ func (k Keeper) sendAnyMessages(ctx context.Context, sender []byte, anyMessages 
 		anyResponses[i] = anyResp
 	}
 	return anyResponses, nil
+}
+
+func (k Keeper) sendManyMessagesReturnAnys(ctx context.Context, sender []byte, msgs []transaction.Msg) ([]*implementation.Any, error) {
+	resp, err := k.sendManyMessages(ctx, sender, msgs)
+	if err != nil {
+		return nil, err
+	}
+	anys := make([]*implementation.Any, len(resp))
+	for i := range resp {
+		anypb, err := implementation.PackAny(resp[i])
+		if err != nil {
+			return nil, err
+		}
+		anys[i] = anypb
+	}
+	return anys, nil
+}
+
+// sendManyMessages is a helper function that sends many untyped messages on behalf of the sender
+// then returns the respective results. Since the function calls into SendModuleMessage
+// it is guaranteed to disallow impersonation attacks from the sender.
+func (k Keeper) sendManyMessages(ctx context.Context, sender []byte, msgs []transaction.Msg) ([]transaction.Msg, error) {
+	resps := make([]transaction.Msg, len(msgs))
+	for i, msg := range msgs {
+		resp, err := k.SendModuleMessage(ctx, sender, msg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute message %d: %s", i, err.Error())
+		}
+		resps[i] = resp
+	}
+	return resps, nil
 }
 
 // SendModuleMessage can be used to send a message towards a module.
@@ -428,6 +497,10 @@ func (k Keeper) maybeSendFunds(ctx context.Context, from, to []byte, amt sdk.Coi
 	}
 
 	return nil
+}
+
+func (k *Keeper) DisableTxBundling() {
+	k.bundlingDisabled = true
 }
 
 const msgInterfaceName = "cosmos.accounts.v1.MsgInterface"

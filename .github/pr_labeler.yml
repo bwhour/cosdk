@@ -14,10 +14,13 @@
   - x/simulation/**/*
   - x/*/simulation/**/*
   - simsx/**/*
+  - tools/benchmark/**/*
 "C:Store":
   - store/**/*
 "C:collections":
   - collections/**/*
+"C:collections/protocodec":
+  - collections/protocodec/*
 "C:core/testing":
   - core/testing/**/*
 "C:log":
@@ -66,8 +69,6 @@
   - x/mint/**/*
 "C:x/nft":
   - x/nft/**/*
-"C:x/params":
-  - x/params/**/*
 "C:x/protocolpool":
   - x/protocolpool/**/*
 "C:x/slashing":

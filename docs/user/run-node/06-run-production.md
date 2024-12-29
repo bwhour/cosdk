@@ -11,7 +11,7 @@ This section describes how to securely run a node in a public setting and/or on 
 When operating a node, full node or validator, in production it is important to set your server up securely. 
 
 :::note
-There are many different ways to secure a server and your node, the described steps here is one way. To see another way of setting up a server see the [run in production tutorial](https://tutorials.cosmos.network/hands-on-exercise/5-run-in-prod/1-overview.html).
+There are many different ways to secure a server and your node, the described steps here is one way. To see another way of setting up a server see the [run in production tutorial](https://tutorials.cosmos.network/hands-on-exercise/4-run-in-prod).
 :::
 
 :::note
@@ -196,7 +196,7 @@ tmkms softsign import $HOME/tmkms/config/secrets/priv_validator_key.json $HOME/t
 
 At this point, it is necessary to delete the `priv_validator_key.json` from the validator node and the tmkms node. Since the key has been imported into tmkms (above) it is no longer necessary on the nodes. The key can be safely stored offline. 
 
-4. Modifiy the `tmkms.toml`. 
+4. Modify the `tmkms.toml`. 
 
 ```bash
 vim $HOME/tmkms/config/tmkms.toml

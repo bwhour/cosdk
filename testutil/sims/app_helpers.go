@@ -11,7 +11,6 @@ import (
 	cmtjson "github.com/cometbft/cometbft/libs/json"
 	cmttypes "github.com/cometbft/cometbft/types"
 
-	coreheader "cosmossdk.io/core/header"
 	corestore "cosmossdk.io/core/store"
 	coretesting "cosmossdk.io/core/testing"
 	"cosmossdk.io/depinject"
@@ -131,10 +130,7 @@ func NextBlock(app *runtime.App, ctx sdk.Context, jumpTime time.Duration) (sdk.C
 	header.Time = newBlockTime
 	header.Height++
 
-	newCtx := app.BaseApp.NewUncachedContext(false, header).WithHeaderInfo(coreheader.Info{
-		Height: header.Height,
-		Time:   header.Time,
-	})
+	newCtx := app.BaseApp.NewUncachedContext(false, header)
 
 	return newCtx, nil
 }
@@ -277,7 +273,7 @@ func GenesisStateWithValSet(
 	// add bonded amount to bonded pool module account
 	balances = append(balances, banktypes.Balance{
 		Address: authtypes.NewModuleAddress(stakingtypes.BondedPoolName).String(),
-		Coins:   sdk.Coins{sdk.NewCoin(sdk.DefaultBondDenom, bondAmt)},
+		Coins:   sdk.Coins{sdk.NewCoin(sdk.DefaultBondDenom, bondAmt.MulRaw(int64(len(delegations))))},
 	})
 
 	// update total supply

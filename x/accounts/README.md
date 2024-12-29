@@ -496,6 +496,32 @@ func (a Account) AuthRetroCompatibility(ctx context.Context, _ *authtypes.QueryL
 * Implement this handler only for account types you want to expose via x/auth gRPC methods.
 * The `info` field in the response can be nil if your account doesn't fit the `BaseAccount` structure.
 
+## Address Derivation
+
+The x/accounts module offers two methods for deriving addresses, both ensuring non-squattability. This means each address is uniquely tied to its creator, preventing address collisions between different creators (e.g., Alice cannot create addresses that would conflict with Bob's addresses).
+
+### Method 1: Using Address Seeds
+
+When creating an account via `MsgInit`, you can provide an `address_seed`. The address is derived using:
+
+```bash
+address = sha256(ModuleName || address_seed || creator_address)
+```
+
+### Method 2: Using Account Numbers
+If no address seed is provided, the address is derived using:
+
+```
+address = sha256(ModuleName || creator_address || next_account_number)
+```
+
+### Address Seed Best Practices
+
+1. Address seeds must be unique per creator (not globally unique)
+2. Reusing an address seed will cause account creation to fail
+3. For programmatic account creation, use an incrementing sequence number as the address seed
+4. This is particularly useful for contracts or modules that need deterministic address generation
+
 ## Genesis
 
 ### Creating accounts on genesis
@@ -540,3 +566,130 @@ For example, given the following `genesis.json` file:
 ```
 
 The accounts module will run the lockup account initialization message.
+
+## Bundling
+
+Transaction bundling enables a designated account (the bundler) to submit transactions on behalf of multiple users. This approach offers several advantages:
+
+1. Fee Abstraction: The bundler assumes responsibility for transaction fees, simplifying the process for end-users.
+2. Flexible Fee Arrangements: Users and bundlers can negotiate fee structures off-chain, allowing for customized payment models.
+3. Improved User Experience: By abstracting away fee complexities, bundling can make blockchain interactions more accessible to a wider audience.
+4. Potential for Optimization: Bundlers can potentially optimize gas usage and reduce overall transaction costs.
+
+```mermaid
+graph TD
+   A1[User 1] -->|Send Tx| B[Bundler]
+   A2[User 2] -->|Send Tx| B
+   A3[User 3] -->|Send Tx| B
+   B -->|Package Txs into MsgExecuteBundle| C[MsgExecuteBundle]
+   C -->|Submit| D[x/accounts module]
+   D -->|Execute Tx 1| E1[Execute independently]
+   D -->|Execute Tx 2| E2[Execute independently]
+   D -->|Execute Tx 3| E3[Execute independently]
+```
+
+### Tx Extension
+
+For a transaction to be processed by a bundler, it must include a `TxExtension`. This extension is defined in the [interface.proto](./proto/cosmos/accounts/interfaces/account_abstraction/v1/interface.proto) file.
+
+```protobuf
+// TxExtension is the extension option that AA's add to txs when they're bundled.
+message TxExtension {
+   // authentication_gas_limit expresses the gas limit to be used for the authentication part of the
+   // bundled tx.
+   uint64 authentication_gas_limit = 1;
+   // bundler_payment_messages expresses a list of messages that the account
+   // executes to pay the bundler for submitting the bundled tx.
+   // It can be empty if the bundler does not need any form of payment,
+   // the handshake for submitting the UserOperation might have happened off-chain.
+   // Bundlers and accounts are free to use any form of payment, in fact the payment can
+   // either be empty or be expressed as:
+   // - NFT payment
+   // - IBC Token payment.
+   // - Payment through delegations.
+   repeated google.protobuf.Any bundler_payment_messages = 2;
+   // bundler_payment_gas_limit defines the gas limit to be used for the bundler payment.
+   // This ensures that, since the bundler executes a list of bundled tx and there needs to
+   // be minimal trust between bundler and the tx sender, the sender cannot consume
+   // the whole bundle gas.
+   uint64 bundler_payment_gas_limit = 3;
+   // execution_gas_limit defines the gas limit to be used for the execution of the UserOperation's
+   // execution messages.
+   uint64 execution_gas_limit = 4;
+}
+```
+
+The purpose of the TxExtension is to provide crucial information for the bundler to process and execute the transaction efficiently and securely. It allows for fine-grained control over gas limits for different parts of the transaction execution and facilitates flexible payment arrangements between the user and the bundler.
+Field explanations:
+
+1. **authentication_gas_limit (uint64)**:
+
+Specifies the maximum amount of gas that can be used for authenticating the bundled transaction.
+Ensures that the authentication process doesn't consume excessive resources.
+
+2. **bundler_payment_messages (repeated google.protobuf.Any)**:
+
+Contains a list of messages defining how the account will pay the bundler for submitting the transaction.
+Offers flexibility in payment methods, including NFTs, IBC tokens, or delegations.
+Can be empty if payment arrangements are made off-chain or if the bundler doesn't require payment.
+
+3. **bundler_payment_gas_limit (uint64)**:
+
+Sets the maximum gas that can be used for processing the bundler payment.
+Prevents a malicious sender from consuming all the gas allocated for the entire bundle, enhancing security in the bundling process.
+
+4. **execution_gas_limit (uint64)**:
+
+Defines the maximum gas allowed for executing the actual transaction messages (UserOperation).
+Helps in accurately estimating and controlling the resources needed for the main transaction execution.
+
+### Compatibility of Your Chain with Bundling
+
+#### Important Considerations
+
+Bundling introduces a bypass mechanism for ante handler checks. This has significant implications for chains that rely on ante handlers for:
+
+- Message validation
+- Admission control logic
+
+If your chain heavily depends on these ante handler functionalities, enabling bundling may compromise your chain's security or operational logic.
+
+#### Disabling Bundling
+
+For chains where bundling is incompatible with existing security measures or operational requirements, you can disable this feature. To do so:
+
+1. Locate your `app.go` file
+2. Add the following method call:
+
+**Non depinject**:
+
+```go
+// add keepers
+func NewApp(...) {
+    ...
+    accountsKeeper, err := accounts.NewKeeper(...)
+    if err != nil {
+        panic(err)
+    }
+    accountsKeeper.DisableTxBundling() <-- // add this line
+    app.AccountsKeeper = accountsKeeper
+	...
+}
+```
+
+**Depinject**:
+
+```go
+	var appModules map[string]appmodule.AppModule
+	if err := depinject.Inject(appConfig,
+		&appBuilder,
+		...
+		&app.AuthKeeper,
+		&app.AccountsKeeper,
+		...
+	); err != nil {
+		panic(err)
+	}
+	
+	app.AccountsKeeper.DisableBundling() // <- add this line
+```

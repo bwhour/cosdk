@@ -9,8 +9,8 @@ import (
 	gateway "github.com/cosmos/gogogateway"
 	"github.com/cosmos/gogoproto/jsonpb"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
-	"google.golang.org/grpc"
 
+	"cosmossdk.io/core/server"
 	"cosmossdk.io/core/transaction"
 	"cosmossdk.io/log"
 	serverv2 "cosmossdk.io/server/v2"
@@ -29,12 +29,16 @@ type Server[T transaction.Tx] struct {
 	cfgOptions []CfgOption
 
 	server            *http.Server
-	gRPCSrv           *grpc.Server
-	gRPCGatewayRouter *runtime.ServeMux
+	GRPCGatewayRouter *runtime.ServeMux
 }
 
 // New creates a new gRPC-gateway server.
-func New[T transaction.Tx](grpcSrv *grpc.Server, ir jsonpb.AnyResolver, cfgOptions ...CfgOption) *Server[T] {
+func New[T transaction.Tx](
+	logger log.Logger,
+	config server.ConfigMap,
+	ir jsonpb.AnyResolver,
+	cfgOptions ...CfgOption,
+) (*Server[T], error) {
 	// The default JSON marshaller used by the gRPC-Gateway is unable to marshal non-nullable non-scalar fields.
 	// Using the gogo/gateway package with the gRPC-Gateway WithMarshaler option fixes the scalar field marshaling issue.
 	marshalerOption := &gateway.JSONPb{
@@ -44,9 +48,8 @@ func New[T transaction.Tx](grpcSrv *grpc.Server, ir jsonpb.AnyResolver, cfgOptio
 		AnyResolver:  ir,
 	}
 
-	return &Server[T]{
-		gRPCSrv: grpcSrv,
-		gRPCGatewayRouter: runtime.NewServeMux(
+	s := &Server[T]{
+		GRPCGatewayRouter: runtime.NewServeMux(
 			// Custom marshaler option is required for gogo proto
 			runtime.WithMarshalerOption(runtime.MIMEWildcard, marshalerOption),
 
@@ -59,6 +62,33 @@ func New[T transaction.Tx](grpcSrv *grpc.Server, ir jsonpb.AnyResolver, cfgOptio
 			runtime.WithIncomingHeaderMatcher(CustomGRPCHeaderMatcher),
 		),
 		cfgOptions: cfgOptions,
+	}
+
+	serverCfg := s.Config().(*Config)
+	if len(config) > 0 {
+		if err := serverv2.UnmarshalSubConfig(config, s.Name(), &serverCfg); err != nil {
+			return s, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
+	}
+
+	// TODO: register the gRPC-Gateway routes
+
+	s.logger = logger.With(log.ModuleKey, s.Name())
+	s.config = serverCfg
+	mux := http.NewServeMux()
+	mux.Handle("/", s.GRPCGatewayRouter)
+
+	s.server = &http.Server{
+		Addr:    s.config.Address,
+		Handler: mux,
+	}
+	return s, nil
+}
+
+// NewWithConfigOptions creates a new gRPC-gateway server with the provided config options.
+func NewWithConfigOptions[T transaction.Tx](opts ...CfgOption) *Server[T] {
+	return &Server[T]{
+		cfgOptions: opts,
 	}
 }
 
@@ -80,34 +110,10 @@ func (s *Server[T]) Config() any {
 	return s.config
 }
 
-func (s *Server[T]) Init(appI serverv2.AppI[transaction.Tx], cfg map[string]any, logger log.Logger) error {
-	serverCfg := s.Config().(*Config)
-	if len(cfg) > 0 {
-		if err := serverv2.UnmarshalSubConfig(cfg, s.Name(), &serverCfg); err != nil {
-			return fmt.Errorf("failed to unmarshal config: %w", err)
-		}
-	}
-
-	// TODO: register the gRPC-Gateway routes
-
-	s.logger = logger.With(log.ModuleKey, s.Name())
-	s.config = serverCfg
-
-	return nil
-}
-
 func (s *Server[T]) Start(ctx context.Context) error {
 	if !s.config.Enable {
 		s.logger.Info(fmt.Sprintf("%s server is disabled via config", s.Name()))
 		return nil
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/", s.gRPCGatewayRouter)
-
-	s.server = &http.Server{
-		Addr:    s.config.Address,
-		Handler: mux,
 	}
 
 	s.logger.Info("starting gRPC-Gateway server...", "address", s.config.Address)

@@ -2,6 +2,7 @@ package serverv2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,22 +11,24 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"golang.org/x/sync/errgroup"
 
 	"cosmossdk.io/core/transaction"
 	"cosmossdk.io/log"
 )
 
-// ServerComponent is a server module that can be started and stopped.
+// ServerComponent is a server component that can be started and stopped.
 type ServerComponent[T transaction.Tx] interface {
+	// Name returns the name of the server component.
 	Name() string
 
+	// Start starts the server component.
 	Start(context.Context) error
+	// Stop stops the server component.
+	// Once Stop has been called on a server component, it may not be reused.
 	Stop(context.Context) error
-	Init(AppI[T], map[string]any, log.Logger) error
 }
 
-// HasStartFlags is a server module that has start flags.
+// HasStartFlags is a server component that has start flags.
 type HasStartFlags interface {
 	// StartCmdFlags returns server start flags.
 	// Those flags should be prefixed with the server name.
@@ -33,24 +36,29 @@ type HasStartFlags interface {
 	StartCmdFlags() *pflag.FlagSet
 }
 
-// HasConfig is a server module that has a config.
+// HasConfig is a server component that has a config.
 type HasConfig interface {
 	Config() any
 }
 
-// HasCLICommands is a server module that has CLI commands.
+// ConfigWriter is a server component that can write its config to a file.
+type ConfigWriter interface {
+	WriteConfig(path string) error
+}
+
+// HasCLICommands is a server component that has CLI commands.
 type HasCLICommands interface {
 	CLICommands() CLIConfig
 }
 
-// CLIConfig defines the CLI configuration for a module server.
+// CLIConfig defines the CLI configuration for a component server.
 type CLIConfig struct {
-	// Commands defines the main command of a module server.
+	// Commands defines the main command of a server component.
 	Commands []*cobra.Command
-	// Queries defines the query commands of a module server.
+	// Queries defines the query commands of a server component.
 	// Those commands are meant to be added in the root query command.
 	Queries []*cobra.Command
-	// Txs defines the tx commands of a module server.
+	// Txs defines the tx commands of a server component.
 	// Those commands are meant to be added in the root tx command.
 	Txs []*cobra.Command
 }
@@ -83,17 +91,17 @@ func (s *Server[T]) Name() string {
 
 // Start starts all components concurrently.
 func (s *Server[T]) Start(ctx context.Context) error {
-	logger := GetLoggerFromContext(ctx)
-	logger.With(log.ModuleKey, s.Name()).Info("starting servers...")
+	logger := GetLoggerFromContext(ctx).With(log.ModuleKey, s.Name())
+	logger.Info("starting servers...")
 
-	g, ctx := errgroup.WithContext(ctx)
+	resCh := make(chan error, len(s.components))
 	for _, mod := range s.components {
-		g.Go(func() error {
-			return mod.Start(ctx)
-		})
+		go func() {
+			resCh <- mod.Start(ctx)
+		}()
 	}
 
-	if err := g.Wait(); err != nil {
+	if err := <-resCh; err != nil {
 		return fmt.Errorf("failed to start servers: %w", err)
 	}
 
@@ -102,19 +110,17 @@ func (s *Server[T]) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops all components concurrently.
+// Stop stops all server components synchronously.
 func (s *Server[T]) Stop(ctx context.Context) error {
-	logger := GetLoggerFromContext(ctx)
-	logger.With(log.ModuleKey, s.Name()).Info("stopping servers...")
+	logger := GetLoggerFromContext(ctx).With(log.ModuleKey, s.Name())
+	logger.Info("stopping servers...")
 
-	g, ctx := errgroup.WithContext(ctx)
+	var err error
 	for _, mod := range s.components {
-		g.Go(func() error {
-			return mod.Stop(ctx)
-		})
+		err = errors.Join(err, mod.Stop(ctx))
 	}
 
-	return g.Wait()
+	return err
 }
 
 // CLICommands returns all CLI commands of all components.
@@ -182,32 +188,9 @@ func (s *Server[T]) StartCmdFlags() *pflag.FlagSet {
 	flags := pflag.NewFlagSet(s.Name(), pflag.ExitOnError)
 	flags.String(FlagMinGasPrices, "", "Minimum gas prices to accept for transactions; Any fee in a tx must meet this minimum (e.g. 0.01photino;0.0001stake)")
 	flags.String(FlagCPUProfiling, "", "Enable CPU profiling and write to the specified file")
+	flags.IntSlice(FlagUnsafeSkipUpgrades, []int{}, "Skip a set of upgrade heights to continue the old binary")
 
 	return flags
-}
-
-// Init initializes all server components with the provided application, configuration, and logger.
-// It returns an error if any component fails to initialize.
-func (s *Server[T]) Init(appI AppI[T], cfg map[string]any, logger log.Logger) error {
-	serverCfg := s.config
-	if len(cfg) > 0 {
-		if err := UnmarshalSubConfig(cfg, s.Name(), &serverCfg); err != nil {
-			return fmt.Errorf("failed to unmarshal config: %w", err)
-		}
-	}
-
-	var components []ServerComponent[T]
-	for _, mod := range s.components {
-		if err := mod.Init(appI, cfg, logger); err != nil {
-			return err
-		}
-
-		components = append(components, mod)
-	}
-
-	s.config = serverCfg
-	s.components = components
-	return nil
 }
 
 // WriteConfig writes the config to the given path.

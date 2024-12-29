@@ -5,18 +5,13 @@
 # Warning: make init-simapp will remove all data in simapp home directory
 #? init-simapp: Initializes a single local node network
 init-simapp:
-	./scripts/init-simapp.sh
+	@echo "No more simapp v1 on this branch"
+	@echo "Use make init-simapp-v2 instead"
 init-simapp-v2:
 	./scripts/init-simapp-v2.sh
 
 #? test: Run `make test-unit`
 test: test-unit
-#? test-e2e: Run `make -C tests test-e2e`
-test-e2e:
-	$(MAKE) -C tests test-e2e
-#? test-e2e-cov: Run `make -C tests test-e2e-cov`
-test-e2e-cov:
-	$(MAKE) -C tests test-e2e-cov
 #? test-integration: Run `make -C tests test-integration`
 test-integration:
 	$(MAKE) -C tests test-integration
@@ -24,7 +19,7 @@ test-integration:
 test-integration-cov:
 	$(MAKE) -C tests test-integration-cov
 #? test-all: Run all test
-test-all: test-unit test-e2e test-integration test-ledger-mock test-race
+test-all: test-unit test-integration test-ledger-mock test-race
 
 .PHONY: test-system
 test-system: build

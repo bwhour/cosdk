@@ -13,16 +13,16 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/version"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
-	v2 "github.com/cosmos/cosmos-sdk/x/genutil/v2"
 )
 
 const (
 	flagHeight           = "height"
+	flagForZeroHeight    = "for-zero-height"
 	flagJailAllowedAddrs = "jail-allowed-addrs"
 )
 
 // ExportCmd dumps app state to JSON.
-func ExportCmd(appExporter v2.AppExporter) *cobra.Command {
+func ExportCmd(app ExportableApp) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export state to JSON",
@@ -34,7 +34,7 @@ func ExportCmd(appExporter v2.AppExporter) *cobra.Command {
 				return err
 			}
 
-			if appExporter == nil {
+			if app == nil {
 				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: App exporter not defined. Returning genesis file."); err != nil {
 					return err
 				}
@@ -57,10 +57,15 @@ func ExportCmd(appExporter v2.AppExporter) *cobra.Command {
 			}
 
 			height, _ := cmd.Flags().GetInt64(flagHeight)
+			forZeroHeight, _ := cmd.Flags().GetBool(flagForZeroHeight)
 			jailAllowedAddrs, _ := cmd.Flags().GetStringSlice(flagJailAllowedAddrs)
 			outputDocument, _ := cmd.Flags().GetString(flags.FlagOutputDocument)
-
-			exported, err := appExporter(cmd.Context(), height, jailAllowedAddrs)
+			if height != -1 {
+				if err := app.LoadHeight(uint64(height)); err != nil {
+					return err
+				}
+			}
+			exported, err := app.ExportAppStateAndValidators(forZeroHeight, jailAllowedAddrs)
 			if err != nil {
 				return fmt.Errorf("error exporting state: %w", err)
 			}
@@ -102,6 +107,7 @@ func ExportCmd(appExporter v2.AppExporter) *cobra.Command {
 		StringSlice(flagJailAllowedAddrs, []string{}, "Comma-separated list of operator addresses of jailed validators to unjail")
 	cmd.Flags().
 		String(flags.FlagOutputDocument, "", "Exported state is written to the given file instead of STDOUT")
+	cmd.Flags().Bool(flagForZeroHeight, false, "Export state to start at height zero (perform preproccessing)")
 
 	return cmd
 }

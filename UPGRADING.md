@@ -5,7 +5,7 @@ Note, always read the **SimApp** section for more information on application wir
 
 ## [Unreleased]
 
-### BaseApp
+<!-- ### BaseApp
 
 #### Nested Messages Simulation
 
@@ -42,7 +42,16 @@ app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 To be able to simulate nested messages within a transaction, message types containing nested messages must implement the
 `HasNestedMsgs` interface. This interface requires a single method: `GetMsgs() ([]sdk.Msg, error)`, which should return
 the nested messages. By implementing this interface, the BaseApp can simulate these nested messages during
-transaction simulation. 
+transaction simulation. -->
+
+### Modules
+
+#### `x/params`
+
+The `x/params` module has been removed from the Cosmos SDK.  The following [migration](https://github.com/cosmos/cosmos-sdk/blob/828fcf2f05db0c4759ed370852b6dacc589ea472/x/mint/migrations/v2/migrate.go) 
+and [PR](https://github.com/cosmos/cosmos-sdk/pull/12363) can be used as a reference for migrating a legacy params module to the supported module-managed params paradigm.
+
+More information can be found in the [deprecation notice](https://github.com/cosmos/cosmos-sdk/blob/main/UPGRADING.md#xparams).
 
 ## [v0.52.x](https://github.com/cosmos/cosmos-sdk/releases/tag/v0.52.0-beta.1)
 
@@ -53,7 +62,7 @@ It is additional to the changes described here.
 
 In this section we describe the changes made in Cosmos SDK' SimApp.
 **These changes are directly applicable to your application wiring.**
-Please read this section first, but for an exhaustive list of changes, refer to the [CHANGELOG](https://github.com/cosmos/cosmos-sdk/blob/main/simapp/CHANGELOG.md).
+Please read this section first, but for an exhaustive list of changes, refer to the [CHANGELOG](https://github.com/cosmos/cosmos-sdk/blob/release/v0.52.x/simapp/CHANGELOG.md).
 
 #### Client (`root.go`)
 
@@ -415,6 +424,8 @@ been added to avoid the use of the Accounts.String() method.
 +type MsgSimulatorFn func(r *rand.Rand, accs []Account, cdc address.Codec) (sdk.Msg, error)
 ```
 
+The interface `HasProposalMsgs` has been renamed to `HasLegacyProposalMsgs`, as we've introduced a new simulation framework, simpler and easier to use, named [simsx](https://github.com/cosmos/cosmos-sdk/blob/main/simsx/README.md).
+
 ##### Depinject
 
 Previously `cosmossdk.io/core` held functions `Invoke`, `Provide` and `Register` were moved to `cosmossdk.io/depinject/appconfig`.
@@ -464,6 +475,23 @@ if err != nil {
 }
 ```
 
+##### TX Decoder
+
+In order to support x/accounts properly we need to init a `TxDecoder`, modify your `app.go`:
+
+```diff
+import (
++ 	txdecode "cosmossdk.io/x/tx/decode"
+)
++	txDecoder, err := txdecode.NewDecoder(txdecode.Options{
++		SigningContext: signingCtx,
++		ProtoCodec:     appCodec,
++	})
++	if err != nil {
++		panic(err)
++	}
+```
+
 #### `x/crisis`
 
 The `x/crisis` module was removed due to it not being supported or functional any longer. 
@@ -478,6 +506,16 @@ Gov v1beta1 proposal handler has been changed to take in a `context.Context` ins
 This change was made to allow legacy proposals to be compatible with server/v2.
 If you wish to migrate to server/v2, you should update your proposal handler to take in a `context.Context` and use services.
 On the other hand, if you wish to keep using baseapp, simply unwrap the sdk context in your proposal handler.
+
+#### `x/mint`
+
+The `x/mint` module has been updated to work with a mint function [`MintFn`](https://docs.cosmos.network/v0.52/build/modules/mint#mintfn).
+
+When using the default inflation calculation function and runtime, no change is required. The depinject configuration of mint automatically sets it if none is provided. However, when not using runtime, the mint function must be set in on the mint keeper:
+
+```diff
++ mintKeeper.SetMintFn(keeper.DefaultMintFn(types.DefaultInflationCalculationFn, stakingKeeper, mintKeeper))
+```
 
 #### `x/protocolpool`
 
@@ -512,6 +550,10 @@ storetypes.StoreUpgrades{
 
 Introducing `x/validate` a module that is solely used for registering default ante/post handlers and global tx validators when using runtime and runtime/v2. If you wish to set your custom ante/post handlers, no need to use this module.
 You can however always extend them by adding extra tx validators (see `x/validate` documentation).
+
+#### `tools/benchmark`
+
+Introducing [`tools/benchmark`](https://github.com/cosmos/cosmos-sdk/tree/main/tools/benchmark) a Cosmos SDK module for benchmarking your chain. It is a standalone module that can be added to your chain to stress test it. This module should NOT be added in a production environment.
 
 ## [v0.50.x](https://github.com/cosmos/cosmos-sdk/releases/tag/v0.50.0-alpha.0)
 
@@ -960,8 +1002,8 @@ To migrate to the `BaseAccount` in `x/accounts`, follow these steps:
 
 1. Send a `basev1.MsgInit` message.
 2. This process allows you to:
-    - Switch to a new public key
-    - Reset your sequence number
+    * Switch to a new public key
+    * Reset your sequence number
 
 > **Important**: If you intend to keep the same public key, ensure you use your current sequence number.
 
@@ -986,12 +1028,12 @@ Here's an example of the `x/auth.MsgMigrateAccount` message structure:
 
 **Field Descriptions**
 
-- `signer`: The address of the account you want to migrate from.
-- `account_type`: The new account type you want to migrate to (depends on what's installed on the chain).
-- `account_init_msg`: The custom initialization message for the new account.
-    - `@type`: Specifies the type of account (in this case, x/accounts base account).
-    - `pub_key`: The public key for the account. You can migrate to a different public key if desired.
-    - `init_sequence`: The new sequence number for the account.
+* `signer`: The address of the account you want to migrate from.
+* `account_type`: The new account type you want to migrate to (depends on what's installed on the chain).
+* `account_init_msg`: The custom initialization message for the new account.
+    * `@type`: Specifies the type of account (in this case, x/accounts base account).
+    * `pub_key`: The public key for the account. You can migrate to a different public key if desired.
+    * `init_sequence`: The new sequence number for the account.
 
 > **Warning**: If you're keeping the same public key, make sure to use your current sequence number to prevent potential replay attacks.
 
@@ -1243,7 +1285,7 @@ The `params` module was deprecated since v0.46. The Cosmos SDK has migrated away
 Cosmos SDK modules now store their parameters directly in its respective modules.
 The `params` module will be removed in `v0.50`, as mentioned [in v0.46 release](https://github.com/cosmos/cosmos-sdk/blob/v0.46.1/UPGRADING.md#xparams). It is strongly encouraged to migrate away from `x/params` before `v0.50`.
 
-When performing a chain migration, the params table must be initizalied manually. This was done in the modules keepers in previous versions.
+When performing a chain migration, the params table must be initialized manually. This was done in the modules keepers in previous versions.
 Have a look at `simapp.RegisterUpgradeHandlers()` for an example.
 
 #### `x/crisis`
