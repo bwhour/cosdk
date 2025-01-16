@@ -3,7 +3,7 @@ module cosmossdk.io/tools/hubl
 go 1.23.0
 
 require (
-	cosmossdk.io/api v0.7.6
+	cosmossdk.io/api v0.8.1
 	cosmossdk.io/client/v2 v2.0.0-beta.1.0.20240118210941-3897926e722e
 	cosmossdk.io/core v0.11.1
 	cosmossdk.io/errors v1.0.1
@@ -12,10 +12,12 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/spf13/cobra v1.8.1
 	google.golang.org/grpc v1.68.1
-	google.golang.org/protobuf v1.36.0
+	google.golang.org/protobuf v1.36.2
 )
 
 require (
+	buf.build/gen/go/cometbft/cometbft/protocolbuffers/go v1.36.1-20241120201313-68e42a58b301.1 // indirect
+	buf.build/gen/go/cosmos/gogo-proto/protocolbuffers/go v1.36.1-20240130113600-88ef6483f90f.1 // indirect
 	cosmossdk.io/collections v0.4.0 // indirect
 	cosmossdk.io/depinject v1.1.0 // indirect
 	cosmossdk.io/log v1.5.0 // indirect
@@ -148,7 +150,7 @@ require (
 	golang.org/x/arch v0.12.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20241217172543-b2144cdd0a67 // indirect
-	golang.org/x/net v0.32.0 // indirect
+	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 	golang.org/x/term v0.27.0 // indirect
