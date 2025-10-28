@@ -3,24 +3,22 @@
 package systemtests
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	systest "cosmossdk.io/systemtests"
+
+	"github.com/cosmos/cosmos-sdk/testutil"
 )
 
 func TestUnorderedTXDuplicate(t *testing.T) {
-	// TODO: remove once unordered tx handling is working in v2
-	t.Skip("The unordered tx handling is not wired in v2")
-
 	// scenario: test unordered tx duplicate
 	// given a running chain with a tx in the unordered tx pool
-	// when a new tx with the same hash is broadcasted
-	// then the new tx should be rejected
+	// when a new tx with the same unordered nonce is broadcasted,
+	// then the new tx should be rejected.
 
 	systest.Sut.ResetChain(t)
 	cli := systest.NewCLIWrapper(t, systest.Sut, systest.Verbose)
@@ -33,18 +31,29 @@ func TestUnorderedTXDuplicate(t *testing.T) {
 
 	systest.Sut.StartChain(t)
 
-	timeoutTimestamp := time.Now().Add(time.Minute)
 	// send tokens
-	rsp1 := cli.Run("tx", "bank", "send", account1Addr, account2Addr, "5000stake", "--from="+account1Addr, "--fees=1stake", fmt.Sprintf("--timeout-timestamp=%v", timeoutTimestamp.Unix()), "--unordered", "--sequence=1", "--note=1")
+	cmd := []string{"tx", "bank", "send", account1Addr, account2Addr, "5000stake", "--from=" + account1Addr, "--fees=1stake", "--timeout-duration=5m", "--unordered", "--note=1", "--chain-id=testing", "--generate-only"}
+	rsp1 := cli.RunCommandWithArgs(cmd...)
+	txFile := testutil.TempFile(t)
+	_, err := txFile.WriteString(rsp1)
+	require.NoError(t, err)
+
+	signCmd := []string{"tx", "sign", txFile.Name(), "--from=" + account1Addr, "--chain-id=testing"}
+	rsp1 = cli.RunCommandWithArgs(signCmd...)
+	signedFile := testutil.TempFile(t)
+	_, err = signedFile.WriteString(rsp1)
+	require.NoError(t, err)
+
+	cmd = []string{"tx", "broadcast", signedFile.Name(), "--chain-id=testing"}
+	rsp1 = cli.RunCommandWithArgs(cmd...)
 	systest.RequireTxSuccess(t, rsp1)
 
-	assertDuplicateErr := func(xt assert.TestingT, gotErr error, gotOutputs ...interface{}) bool {
-		require.Len(t, gotOutputs, 1)
-		assert.Contains(t, gotOutputs[0], "is duplicated: invalid request")
-		return false // always abort
-	}
-	rsp2 := cli.WithRunErrorMatcher(assertDuplicateErr).Run("tx", "bank", "send", account1Addr, account2Addr, "5000stake", "--from="+account1Addr, "--fees=1stake", fmt.Sprintf("--timeout-timestamp=%v", timeoutTimestamp.Unix()), "--unordered", "--sequence=1")
+	cmd = []string{"tx", "broadcast", signedFile.Name(), "--chain-id=testing"}
+	rsp2, _ := cli.RunOnly(cmd...)
 	systest.RequireTxFailure(t, rsp2)
+	code := gjson.Get(rsp2, "code")
+	require.True(t, code.Exists())
+	require.Equal(t, int64(19), code.Int())
 
 	require.Eventually(t, func() bool {
 		return cli.QueryBalance(account2Addr, "stake") == 5000

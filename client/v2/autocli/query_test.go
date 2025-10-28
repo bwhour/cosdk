@@ -18,7 +18,7 @@ import (
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
 	queryv1beta1 "cosmossdk.io/api/cosmos/base/query/v1beta1"
 	basev1beta1 "cosmossdk.io/api/cosmos/base/v1beta1"
-	"cosmossdk.io/client/v2/internal/testpb"
+	testpb "cosmossdk.io/client/v2/internal/testpbpulsar"
 
 	"github.com/cosmos/cosmos-sdk/client"
 )
@@ -339,7 +339,7 @@ func TestMap(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid argument \"bar=123.9\" for \"--map-string-uint32\" flag: strconv.ParseUint: parsing \"123.9\": invalid syntax")
 }
 
-// TestEverything tests all the different types of flags are correctly read and as well as correctly returned
+// TestEveything tests all the different types of flags are correctly read and as well as correctly returned
 // This tests the flag binding and the message building
 func TestEverything(t *testing.T) {
 	fixture := initFixture(t)
@@ -575,6 +575,8 @@ func TestBinaryFlag(t *testing.T) {
 }
 
 func TestAddressValidation(t *testing.T) {
+	t.Skip() // TODO(@julienrbrt) re-able with better keyring instantiation
+
 	fixture := initFixture(t)
 
 	_, err := runCmd(fixture, buildModuleQueryCommand,

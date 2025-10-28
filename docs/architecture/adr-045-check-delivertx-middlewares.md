@@ -64,7 +64,7 @@ type ResponseCheckTx struct {
 }
 ```
 
-Please note that because CheckTx handles separate logic related to mempool priotization, its signature is different than DeliverTx and SimulateTx.
+Please note that because CheckTx handles separate logic related to mempool prioritization, its signature is different than DeliverTx and SimulateTx.
 
 BaseApp holds a reference to a `tx.Handler`:
 
@@ -185,7 +185,7 @@ func (h myTxHandler) SimulateTx(ctx context.Context, req Request) (Response, err
 
 While BaseApp simply holds a reference to a `tx.Handler`, this `tx.Handler` itself is defined using a middleware stack. The Cosmos SDK exposes a base (i.e. innermost) `tx.Handler` called `RunMsgsTxHandler`, which executes messages.
 
-Then, the app developer can compose multiple middlewares on top on the base `tx.Handler`. Each middleware can run pre-and-post-processing logic around its next middleware, as described in the section above. Conceptually, as an example, given the middlewares `A`, `B`, and `C` and the base `tx.Handler` `H` the stack looks like:
+Then, the app developer can compose multiple middlewares on top of the base `tx.Handler`. Each middleware can run pre-and-post-processing logic around its next middleware, as described in the section above. Conceptually, as an example, given the middlewares `A`, `B`, and `C` and the base `tx.Handler` `H` the stack looks like:
 
 ```text
 A.pre

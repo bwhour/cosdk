@@ -10,7 +10,7 @@ abstractions.
 
 ### `Store`
 
-The bulk of the store interfaces are defined [here](https://github.com/cosmos/cosmos-sdk/blob/main/store/store.go),
+The bulk of the store interfaces are defined [here](https://github.com/cosmos/cosmos-sdk/blob/main/store/types/store.go),
 where the base primitive interface, for which other interfaces build off of, is
 the `Store` type. The `Store` interface defines the ability to tell the type of
 the implementing store and the ability to cache wrap via the `CacheWrapper` interface.
@@ -29,9 +29,9 @@ with, which also provides the basis of most state storage and commitment operati
 is the `KVStore`. The `KVStore` interface provides basic CRUD abilities and
 prefix-based iteration, including reverse iteration.
 
-Typically, each module has its own dedicated `KVStore` instance, which it can
+Typically, each module has it's own dedicated `KVStore` instance, which it can
 get access to via the `sdk.Context` and the use of a pointer-based named key --
-`KVStoreKey`. The `KVStoreKey` provides pseudo-OCAP. How an exactly a `KVStoreKey`
+`KVStoreKey`. The `KVStoreKey` provides pseudo-OCAP. How a exactly a `KVStoreKey`
 maps to a `KVStore` will be illustrated below through the `CommitMultiStore`.
 
 Note, a `KVStore` cannot directly commit state. Instead, a `KVStore` can be wrapped
@@ -156,7 +156,7 @@ state from each `KVStore` to disk and returning an application state Merkle root
 Queries can be performed to return state data along with associated state
 commitment proofs for both previous heights/versions and the current state root.
 Queries are routed based on store name, i.e. a module, along with other parameters
-which are defined in `abci.QueryRequest`.
+which are defined in `abci.RequestQuery`.
 
 The `rootmulti.Store` also provides primitives for pruning data at a given
 height/version from state storage. When a height is committed, the `rootmulti.Store`

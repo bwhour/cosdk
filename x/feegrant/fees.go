@@ -19,7 +19,7 @@ type FeeAllowanceI interface {
 	// and will be saved again after an acceptance.
 	//
 	// If remove is true (regardless of the error), the FeeAllowance will be deleted from storage
-	// (e.g. when it is used up). (See call to RevokeAllowance in Keeper.UseGrantedFees)
+	// (eg. when it is used up). (See call to RevokeAllowance in Keeper.UseGrantedFees)
 	Accept(ctx context.Context, fee sdk.Coins, msgs []sdk.Msg) (remove bool, err error)
 
 	// ValidateBasic should evaluate this FeeAllowance for internal consistency.
@@ -28,7 +28,4 @@ type FeeAllowanceI interface {
 
 	// ExpiresAt returns the expiry time of the allowance.
 	ExpiresAt() (*time.Time, error)
-
-	// UpdatePeriodReset update "PeriodReset" value by valid time
-	UpdatePeriodReset(validTime time.Time) error
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/stretchr/testify/require"
 
 	"cosmossdk.io/log"
@@ -85,7 +86,7 @@ func (a signerExtractionAdapter) GetSigners(tx sdk.Tx) ([]mempool.SignerData, er
 
 func (s *MempoolTestSuite) TestPriorityNonceTxOrderWithAdapter() {
 	t := s.T()
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 5)
 	sa := accounts[0].Address
 	sb := accounts[1].Address
@@ -144,7 +145,7 @@ func (s *MempoolTestSuite) TestPriorityNonceTxOrderWithAdapter() {
 
 func (s *MempoolTestSuite) TestPriorityNonceTxOrder() {
 	t := s.T()
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 5)
 	sa := accounts[0].Address
 	sb := accounts[1].Address
@@ -343,7 +344,7 @@ func (s *MempoolTestSuite) TestPriorityNonceTxOrder() {
 
 func (s *MempoolTestSuite) TestIterator() {
 	t := s.T()
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 2)
 	sa := accounts[0].Address
 	sb := accounts[1].Address
@@ -399,7 +400,7 @@ func (s *MempoolTestSuite) TestIterator() {
 
 func (s *MempoolTestSuite) TestIteratorConcurrency() {
 	t := s.T()
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 2)
 	sa := accounts[0].Address
 	sb := accounts[1].Address
@@ -481,7 +482,7 @@ func (s *MempoolTestSuite) TestIteratorConcurrency() {
 }
 
 func (s *MempoolTestSuite) TestPriorityTies() {
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 3)
 	sa := accounts[0].Address
 	sb := accounts[1].Address
@@ -496,7 +497,7 @@ func (s *MempoolTestSuite) TestPriorityTies() {
 		{p: 10, n: 2, a: sa},
 	}
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		s.mempool = mempool.DefaultPriorityMempool()
 		var shuffled []txSpec
 		for _, t := range txSet {
@@ -527,7 +528,7 @@ func (s *MempoolTestSuite) TestPriorityTies() {
 }
 
 func (s *MempoolTestSuite) TestRandomTxOrderManyTimes() {
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		s.Run("TestRandomGeneratedTxs", func() {
 			s.TestRandomGeneratedTxs()
 		})
@@ -584,6 +585,7 @@ func validateOrder(mtxs []sdk.Tx) error {
 			}
 		}
 	}
+	// fmt.Printf("validation in iterations: %d\n", iterations)
 	return nil
 }
 
@@ -600,7 +602,7 @@ func (s *MempoolTestSuite) TestRandomGeneratedTxs() {
 	)
 
 	t := s.T()
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	seed := time.Now().UnixNano()
 
 	t.Logf("running with seed: %d", seed)
@@ -636,7 +638,7 @@ func (s *MempoolTestSuite) TestRandomWalkTxs() {
 	s.mempool = mempool.DefaultPriorityMempool()
 
 	t := s.T()
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 
 	seed := time.Now().UnixNano()
 	// interesting failing seeds:
@@ -661,7 +663,7 @@ func (s *MempoolTestSuite) TestRandomWalkTxs() {
 	require.Equal(t, len(ordered), len(selected))
 	var orderedStr, selectedStr string
 
-	for i := 0; i < s.numTxs; i++ {
+	for i := range s.numTxs {
 		otx := ordered[i]
 		stx := selected[i].(testTx)
 		orderedStr = fmt.Sprintf("%s\n%s, %d, %d; %d",
@@ -691,7 +693,7 @@ func genRandomTxs(seed int64, countTx, countAccount int) (res []testTx) {
 		accountNonces[account.Address.String()] = 0
 	}
 
-	for i := 0; i < countTx; i++ {
+	for i := range countTx {
 		addr := accounts[r.Intn(countAccount)].Address
 		priority := int64(r.Intn(maxPriority + 1))
 		nonce := accountNonces[addr.String()]
@@ -809,7 +811,7 @@ func TestTxOrderN(t *testing.T) {
 
 func TestPriorityNonceMempool_NextSenderTx(t *testing.T) {
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 2)
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	accA := accounts[0].Address
 	accB := accounts[1].Address
 
@@ -839,7 +841,7 @@ func TestPriorityNonceMempool_NextSenderTx(t *testing.T) {
 
 func TestNextSenderTx_TxLimit(t *testing.T) {
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 2)
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	sa := accounts[0].Address
 	sb := accounts[1].Address
 
@@ -915,13 +917,13 @@ func TestNextSenderTx_TxLimit(t *testing.T) {
 
 func TestNextSenderTx_TxReplacement(t *testing.T) {
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 1)
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	sa := accounts[0].Address
 
 	txs := []testTx{
 		{priority: 20, nonce: 1, address: sa},
-		{priority: 15, nonce: 1, address: sa}, // priority is less than the first Tx, failed tx replacement when the option enabled.
-		{priority: 23, nonce: 1, address: sa}, // priority is not 20% more than the first Tx, failed tx replacement when the option enabled.
+		{priority: 15, nonce: 1, address: sa}, // priority is less than the first Tx, failed tx replacement when the option is enabled.
+		{priority: 23, nonce: 1, address: sa}, // priority is not 20% more than the first Tx, failed tx replacement when the option is enabled.
 		{priority: 24, nonce: 1, address: sa}, // priority is 20% more than the first Tx, the first tx will be replaced.
 	}
 
@@ -937,7 +939,7 @@ func TestNextSenderTx_TxReplacement(t *testing.T) {
 	}
 
 	// test Priority with TxReplacement
-	// we set a TestTxReplacement rule which the priority of the new Tx must be 20% more than the priority of the old Tx
+	// we set a TestTxReplacement rule where the priority of the new Tx must be 20% more than the priority of the old Tx
 	// otherwise, the Insert will return error
 	feeBump := 20
 	mp = mempool.NewPriorityMempool(
@@ -971,8 +973,16 @@ func TestNextSenderTx_TxReplacement(t *testing.T) {
 	require.Equal(t, txs[3], iter.Tx())
 }
 
+func TestPriorityNonceMempool_UnorderedTx_FailsForSequence(t *testing.T) {
+	mp := mempool.DefaultPriorityMempool()
+	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 1)
+	tx := testTx{id: 1, priority: 0, address: accounts[0].Address, nonce: 1, unordered: true}
+	err := mp.Insert(sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger()), tx)
+	require.ErrorContains(t, err, "unordered txs must not have sequence set")
+}
+
 func TestPriorityNonceMempool_UnorderedTx(t *testing.T) {
-	ctx := sdk.NewContext(nil, false, log.NewNopLogger())
+	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, log.NewNopLogger())
 	accounts := simtypes.RandomAccounts(rand.New(rand.NewSource(0)), 2)
 	sa := accounts[0].Address
 	sb := accounts[1].Address

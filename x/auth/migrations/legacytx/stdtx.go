@@ -1,8 +1,6 @@
 package legacytx
 
 import (
-	gogoprotoany "github.com/cosmos/gogoproto/types/any"
-
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 
@@ -15,9 +13,9 @@ import (
 
 // Interface implementation checks
 var (
-	_ gogoprotoany.UnpackInterfacesMessage = (*StdTx)(nil)
+	_ codectypes.UnpackInterfacesMessage = (*StdTx)(nil)
 
-	_ gogoprotoany.UnpackInterfacesMessage = (*StdSignature)(nil)
+	_ codectypes.UnpackInterfacesMessage = (*StdSignature)(nil)
 )
 
 // StdFee includes the amount of coins paid in fees and the maximum
@@ -81,7 +79,8 @@ type StdTip struct {
 // StdTx is the legacy transaction format for wrapping a Msg with Fee and Signatures.
 // It only works with Amino, please prefer the new protobuf Tx in types/tx.
 // NOTE: the first signature is the fee payer (Signatures must not be nil).
-// Deprecated
+//
+// Deprecated: may be removed in the future.
 type StdTx struct {
 	Msgs          []sdk.Msg      `json:"msg" yaml:"msg"`
 	Fee           StdFee         `json:"fee" yaml:"fee"`
@@ -90,7 +89,9 @@ type StdTx struct {
 	TimeoutHeight uint64         `json:"timeout_height" yaml:"timeout_height"`
 }
 
-// Deprecated
+// NewStdTx is a legacy function.
+//
+// Deprecated: may be removed in the future.
 func NewStdTx(msgs []sdk.Msg, fee StdFee, sigs []StdSignature, memo string) StdTx {
 	return StdTx{
 		Msgs:       msgs,
@@ -171,7 +172,7 @@ func (tx StdTx) FeeGranter() sdk.AccAddress {
 	return nil
 }
 
-func (tx StdTx) UnpackInterfaces(unpacker gogoprotoany.AnyUnpacker) error {
+func (tx StdTx) UnpackInterfaces(unpacker codectypes.AnyUnpacker) error {
 	for _, m := range tx.Msgs {
 		err := codectypes.UnpackInterfaces(m, unpacker)
 		if err != nil {

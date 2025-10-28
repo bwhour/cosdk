@@ -215,8 +215,8 @@ func (s *decimalTestSuite) TestDecsEqual() {
 	}
 
 	for tcIndex, tc := range tests {
-		s.Require().Equal(tc.eq, math.LegacyDecsEqual(tc.d1s, tc.d2s), "equality of decional arrays is incorrect, tc %d", tcIndex)
-		s.Require().Equal(tc.eq, math.LegacyDecsEqual(tc.d2s, tc.d1s), "equality of decional arrays is incorrect (converse), tc %d", tcIndex)
+		s.Require().Equal(tc.eq, math.LegacyDecsEqual(tc.d1s, tc.d2s), "equality of decimal arrays is incorrect, tc %d", tcIndex)
+		s.Require().Equal(tc.eq, math.LegacyDecsEqual(tc.d2s, tc.d1s), "equality of decimal arrays is incorrect (converse), tc %d", tcIndex)
 	}
 }
 
@@ -227,7 +227,7 @@ func (s *decimalTestSuite) TestArithmetic() {
 		expQuo, expQuoRoundUp, expQuoTruncate math.LegacyDec
 		expAdd, expSub                        math.LegacyDec
 	}{
-		//  d1         d2         MUL    MulTruncate   MulRoundUp    QUO    QUORoundUp QUOTrunctate  ADD         SUB
+		//  d1         d2         MUL    MulTruncate   MulRoundUp    QUO    QUORoundUp QUOTruncate  ADD         SUB
 		{math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0)},
 		{math.LegacyNewDec(1), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(1), math.LegacyNewDec(1)},
 		{math.LegacyNewDec(0), math.LegacyNewDec(1), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(0), math.LegacyNewDec(1), math.LegacyNewDec(-1)},
@@ -1308,12 +1308,12 @@ func TestRoundIntLimits(t *testing.T) {
 func BenchmarkIsInValidRange(b *testing.B) {
 	maxValid, ok := new(big.Int).SetString(maxValidDecNumber, 10)
 	require.True(b, ok)
-	souceMax := math.LegacyNewDecFromBigIntWithPrec(maxValid, 18)
+	sourceMax := math.LegacyNewDecFromBigIntWithPrec(maxValid, 18)
 	b.ResetTimer()
 	specs := map[string]math.LegacyDec{
-		"max":         souceMax,
+		"max":         sourceMax,
 		"greater max": math.LegacyNewDecFromBigIntWithPrec(maxValid, 16),
-		"min":         souceMax.Neg(),
+		"min":         sourceMax.Neg(),
 		"lower min":   math.LegacyNewDecFromBigIntWithPrec(new(big.Int).Neg(maxValid), 16),
 		"zero":        math.LegacyZeroDec(),
 		"one":         math.LegacyOneDec(),
@@ -1325,4 +1325,108 @@ func BenchmarkIsInValidRange(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestFormatDecValid(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"123", "123"},
+		{"123.456000", "123.456"},
+		{"-123.450", "-123.45"},
+		{"00123.4500", "123.45"},
+		{"0.000000000000000000", "0"},
+		{"123.000000000000000000", "123"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			formatted, err := math.FormatDec(tt.input)
+			require.NoError(t, err, "FormatDec(%q) should not error", tt.input)
+			require.Equal(t, tt.expected, formatted, "unexpected formatted value for input %q", tt.input)
+		})
+	}
+}
+
+func TestRoundAndTruncate(t *testing.T) {
+	// These cases use bankers rounding:
+	// For example, 0.25 rounds to 0, 0.75 rounds to 1, 1.5 rounds to 2, while truncation always drops the decimal.
+	tests := []struct {
+		input            string
+		expectedRoundInt int64
+		expectedTruncate int64
+	}{
+		{"0.25", 0, 0},
+		{"0.75", 1, 0},
+		{"1.5", 2, 1},
+		{"2.5", 2, 2},
+		{"7.5", 8, 7},
+		{"-0.25", 0, 0},
+		{"-0.75", -1, 0},
+		{"-1.5", -2, -1},
+		{"-2.5", -2, -2},
+		{"-7.5", -8, -7},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			dec, err := math.LegacyNewDecFromStr(tt.input)
+			require.NoError(t, err)
+			round := dec.RoundInt64()
+			trunc := dec.TruncateInt64()
+			require.Equal(t, tt.expectedRoundInt, round, "RoundInt64 mismatch for input %q", tt.input)
+			require.Equal(t, tt.expectedTruncate, trunc, "TruncateInt64 mismatch for input %q", tt.input)
+		})
+	}
+}
+
+func TestLegacySortableDecBytes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string // expected string representation of the sortable bytes
+	}{
+		// Note: The expected outputs here are based on the formatting defined in LegacySortableDecBytes.
+		{"0", "000000000000000000.000000000000000000"},
+		{"1", "000000000000000001.000000000000000000"},
+		{"10", "000000000000000010.000000000000000000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			dec, err := math.LegacyNewDecFromStr(tt.input)
+			require.NoError(t, err)
+			bs := math.LegacySortableDecBytes(dec)
+			require.Equal(t, tt.expected, string(bs), "SortableDecBytes mismatch for input %q", tt.input)
+		})
+	}
+
+	// Test that an out-of-bound decimal causes a panic.
+	// For example, multiply the max sortable decimal by 2.
+	outOfBound := math.LegacyMaxSortableDec.Mul(math.LegacyNewDec(2))
+	require.Panics(t, func() {
+		_ = math.LegacySortableDecBytes(outOfBound)
+	}, "expected panic for out-of-bound decimal")
+}
+
+func TestLegacyNewDecFromStr_TooManyDecimals(t *testing.T) {
+	// Create a decimal string with more than LegacyPrecision digits after the dot.
+	decStr := "1." + strings.Repeat("1", math.LegacyPrecision+1)
+	_, err := math.LegacyNewDecFromStr(decStr)
+	require.Error(t, err, "expected error when input has more than %d decimal places", math.LegacyPrecision)
+}
+
+func TestUnmarshalJSON_InvalidFormat(t *testing.T) {
+	var dec math.LegacyDec
+	// Passing a JSON number rather than a string should error.
+	err := dec.UnmarshalJSON([]byte("123"))
+	require.Error(t, err, "expected error when unmarshaling a non-string JSON value")
+}
+
+func TestMarshalYAML(t *testing.T) {
+	dec, err := math.LegacyNewDecFromStr("123.456")
+	require.NoError(t, err)
+	y, err := dec.MarshalYAML()
+	require.NoError(t, err)
+	require.Equal(t, dec.String(), y, "YAML marshaling mismatch")
 }

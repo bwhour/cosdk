@@ -8,9 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"cosmossdk.io/x/bank/types"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
 // MintingRestrictionArgs are the args provided to a MintingRestrictionFn function.
@@ -83,7 +82,7 @@ func (s *MintingRestrictionTestHelper) TestActual(t *testing.T, tp *MintingRestr
 	} else {
 		require.NotNil(t, actual, "resulting MintingRestrictionFn")
 		s.Calls = s.Calls[:0]
-		err := actual(context.Background(), tp.Coins)
+		err := actual(sdk.Context{}, tp.Coins)
 		if len(tp.ExpErr) != 0 {
 			assert.EqualError(t, err, tp.ExpErr, "composite MintingRestrictionFn output error")
 		} else {
@@ -389,10 +388,10 @@ func TestComposeMintingRestrictions(t *testing.T) {
 func TestNoOpMintingRestrictionFn(t *testing.T) {
 	var err error
 	testFunc := func() {
-		err = types.NoOpMintingRestrictionFn(context.Background(), sdk.Coins{})
+		err = types.NoOpMintingRestrictionFn(sdk.Context{}, sdk.Coins{})
 	}
 	require.NotPanics(t, testFunc, "NoOpMintingRestrictionFn")
-	assert.NoError(t, err, "NoOpSendRestrictionFn error")
+	assert.NoError(t, err, "NoOpMintingRestrictionFn error")
 }
 
 // SendRestrictionArgs are the args provided to a SendRestrictionFn function.
@@ -483,7 +482,7 @@ func (s *SendRestrictionTestHelper) TestActual(t *testing.T, tp *SendRestriction
 	} else {
 		require.NotNil(t, actual, "resulting SendRestrictionFn")
 		s.Calls = s.Calls[:0]
-		addr, err := actual(context.Background(), tp.FromAddr, tp.ToAddr, tp.Coins)
+		addr, err := actual(sdk.Context{}, tp.FromAddr, tp.ToAddr, tp.Coins)
 		if len(tp.ExpErr) != 0 {
 			assert.EqualError(t, err, tp.ExpErr, "composite SendRestrictionFn output error")
 		} else {
@@ -912,7 +911,7 @@ func TestNoOpSendRestrictionFn(t *testing.T) {
 	var addr sdk.AccAddress
 	var err error
 	testFunc := func() {
-		addr, err = types.NoOpSendRestrictionFn(context.Background(), sdk.AccAddress("first_addr"), expAddr, sdk.Coins{})
+		addr, err = types.NoOpSendRestrictionFn(sdk.Context{}, sdk.AccAddress("first_addr"), expAddr, sdk.Coins{})
 	}
 	require.NotPanics(t, testFunc, "NoOpSendRestrictionFn")
 	assert.NoError(t, err, "NoOpSendRestrictionFn error")

@@ -1,11 +1,10 @@
-//go:build system_test && linux
+//go:build system_test
 
 package systemtests
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -18,6 +17,12 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/address"
 )
 
+const (
+	testSeed            = "scene learn remember glide apple expand quality spawn property shoe lamp carry upset blossom draft reject aim file trash miss script joy only measure"
+	upgradeHeight int64 = 22
+	upgradeName         = "v053-to-v054" // must match UpgradeName in simapp/upgrades.go
+)
+
 func TestChainUpgrade(t *testing.T) {
 	// Scenario:
 	// start a legacy chain with some state
@@ -25,22 +30,17 @@ func TestChainUpgrade(t *testing.T) {
 	// then the chain upgrades successfully
 	systest.Sut.StopChain()
 
-	legacyBinary := FetchExecutable(t, "0.52.0-beta.3")
-	t.Logf("+++ legacy binary: %s\n", legacyBinary)
 	currentBranchBinary := systest.Sut.ExecBinary()
 	currentInitializer := systest.Sut.TestnetInitializer()
+
+	legacyBinary := systest.WorkDir + "/binaries/v0.53/simd"
 	systest.Sut.SetExecBinary(legacyBinary)
-	systest.Sut.SetTestnetInitializer(systest.InitializerWithBinary(legacyBinary, systest.Sut))
 	systest.Sut.SetupChain()
+
 	votingPeriod := 5 * time.Second // enough time to vote
 	systest.Sut.ModifyGenesisJSON(t, systest.SetGovVotingPeriod(t, votingPeriod))
 
-	const (
-		upgradeHeight int64 = 22
-		upgradeName         = "v052-to-v2" // must match UpgradeName in simapp/upgrades.go
-	)
-
-	systest.Sut.StartChain(t, fmt.Sprintf("--comet.halt-height=%d", upgradeHeight+1))
+	systest.Sut.StartChain(t, fmt.Sprintf("--halt-height=%d", upgradeHeight+1))
 
 	cli := systest.NewCLIWrapper(t, systest.Sut, systest.Verbose)
 	govAddr := sdk.AccAddress(address.Module("gov")).String()
@@ -71,7 +71,7 @@ func TestChainUpgrade(t *testing.T) {
 	t.Logf("current_height: %d\n", systest.Sut.CurrentHeight())
 	raw = cli.CustomQuery("q", "gov", "proposal", proposalID)
 	proposalStatus := gjson.Get(raw, "proposal.status").String()
-	require.Equal(t, "PROPOSAL_STATUS_PASSED", proposalStatus, raw) // PROPOSAL_STATUS_PASSED
+	require.Equal(t, "PROPOSAL_STATUS_PASSED", proposalStatus, raw)
 
 	t.Log("waiting for upgrade info")
 	systest.Sut.AwaitUpgradeInfo(t)
@@ -81,35 +81,15 @@ func TestChainUpgrade(t *testing.T) {
 	systest.Sut.SetExecBinary(currentBranchBinary)
 	systest.Sut.SetTestnetInitializer(currentInitializer)
 	systest.Sut.StartChain(t)
-	cli = systest.NewCLIWrapper(t, systest.Sut, systest.Verbose)
+
+	require.True(t, upgradeHeight+1 <= systest.Sut.CurrentHeight())
+
+	regex, err := regexp.Compile("DBG this is a debug level message to test that verbose logging mode has properly been enabled during a chain upgrade")
+	require.NoError(t, err)
+	require.Equal(t, systest.Sut.NodesCount(), systest.Sut.FindLogMessage(regex))
 
 	// smoke test that new version runs
-	ownerAddr := cli.GetKeyAddr("node0")
-	got := cli.Run("tx", "accounts", "init", "continuous-locking-account", `{"end_time":"2034-01-22T11:38:15.116127Z", "owner":"`+ownerAddr+`"}`, "--from=node0")
+	cli = systest.NewCLIWrapper(t, systest.Sut, systest.Verbose)
+	got := cli.Run("tx", "protocolpool", "fund-community-pool", "100stake", "--from=node0")
 	systest.RequireTxSuccess(t, got)
-	got = cli.Run("tx", "protocolpool", "fund-community-pool", "100stake", "--from=node0")
-	systest.RequireTxSuccess(t, got)
-}
-
-const cacheDir = "binaries"
-
-// FetchExecutable to download and extract tar.gz for linux
-func FetchExecutable(t *testing.T, version string) string {
-	// use local cache
-	cacheFolder := filepath.Join(systest.WorkDir, cacheDir)
-	err := os.MkdirAll(cacheFolder, 0o777)
-	if err != nil && !os.IsExist(err) {
-		panic(err)
-	}
-
-	cacheFile := filepath.Join(cacheFolder, fmt.Sprintf("%s_%s", systest.GetExecutableName(), version))
-	if _, err := os.Stat(cacheFile); err == nil {
-		return cacheFile
-	}
-	destFile := cacheFile
-	t.Log("+++ version not in cache, downloading from docker image")
-	systest.MustRunShellCmd(t, "docker", "pull", "ghcr.io/cosmos/simapp:"+version)
-	systest.MustRunShellCmd(t, "docker", "create", "--name=ci_temp", "ghcr.io/cosmos/simapp:"+version)
-	systest.MustRunShellCmd(t, "docker", "cp", "ci_temp:/usr/bin/simd", destFile)
-	return destFile
 }

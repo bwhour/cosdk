@@ -1,4 +1,4 @@
-# ADR 048: Multi Tire Gas Price System
+# ADR 048: Multi Tier Gas Price System
 
 ## Changelog
 
@@ -26,7 +26,7 @@ We propose a multi-tier price system on consensus to provide maximum flexibility
 * Tier 2: a dynamic gas price which is adjusted according to previous block load.
 * Tier 3: a dynamic gas price which is adjusted according to previous block load at a higher speed.
 
-The gas price of higher tier should bigger than the lower tier.
+The gas price of higher tier should be bigger than the lower tier.
 
 The transaction fees are charged with the exact gas price calculated on consensus.
 
@@ -201,5 +201,4 @@ If attacker spam with lower tier transactions, user can mitigate by sending high
 ## References
 
 * https://eips.ethereum.org/EIPS/eip-1559
-<!-- markdown-link-check-disable-next-line -->
-* https://iohk.io/en/blog/posts/2021/11/26/network-traffic-and-tiered-pricing
+* https://iohk.io/en/blog/posts/2021/11/26/network-traffic-and-tiered-pricing/
