@@ -1,6 +1,6 @@
 module cosmossdk.io/store
 
-go 1.24.0
+go 1.25
 
 replace github.com/tidwall/btree => github.com/cosmos/btree v0.0.0-20250924232609-2c6195d95951
 
@@ -15,7 +15,7 @@ require (
 	github.com/cosmos/iavl v1.2.6
 	github.com/cosmos/ics23/go v0.11.0
 	github.com/hashicorp/go-hclog v1.6.3
-	github.com/hashicorp/go-metrics v0.5.4
+	github.com/hashicorp/go-metrics v0.6.0
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/hashicorp/golang-lru v1.0.2
 	github.com/stretchr/testify v1.11.1
